@@ -405,8 +405,3 @@ export async function runSetup(): Promise<void> {
   p.outro(green('Setup complete!'));
 }
 
-// Run if called directly
-runSetup().catch(err => {
-  console.error('Setup failed:', err);
-  process.exit(1);
-});
