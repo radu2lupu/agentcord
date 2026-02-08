@@ -49,7 +49,17 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
         .addStringOption(opt =>
           opt.setName('model').setDescription('Model name (e.g. claude-sonnet-4-5-20250929)').setRequired(true)))
     .addSubcommand(sub =>
-      sub.setName('verbose').setDescription('Toggle showing tool calls and results in this session'));
+      sub.setName('verbose').setDescription('Toggle showing tool calls and results in this session'))
+    .addSubcommand(sub =>
+      sub.setName('mode')
+        .setDescription('Set session mode (auto/plan/normal)')
+        .addStringOption(opt =>
+          opt.setName('mode').setDescription('Session mode').setRequired(true)
+            .addChoices(
+              { name: 'Auto — full autonomy', value: 'auto' },
+              { name: 'Plan — plan before executing', value: 'plan' },
+              { name: 'Normal — ask before destructive ops', value: 'normal' },
+            )));
 
   const shell = new SlashCommandBuilder()
     .setName('shell')

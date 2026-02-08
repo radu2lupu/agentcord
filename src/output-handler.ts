@@ -73,6 +73,26 @@ function makeOptionButtons(sessionId: string, options: string[]): ActionRowBuild
   return rows;
 }
 
+export function makeModeButtons(sessionId: string, currentMode: string): ActionRowBuilder<ButtonBuilder> {
+  const modes = [
+    { id: 'auto', label: '\u26A1 Auto' },
+    { id: 'plan', label: '\uD83D\uDCCB Plan' },
+    { id: 'normal', label: '\uD83D\uDEE1\uFE0F Normal' },
+  ];
+
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  for (const m of modes) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`mode:${sessionId}:${m.id}`)
+        .setLabel(m.label)
+        .setStyle(m.id === currentMode ? ButtonStyle.Primary : ButtonStyle.Secondary)
+        .setDisabled(m.id === currentMode),
+    );
+  }
+  return row;
+}
+
 function makeYesNoButtons(sessionId: string): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -369,6 +389,7 @@ export async function handleOutputStream(
   channel: TextChannel,
   sessionId: string,
   verbose = false,
+  mode = 'auto',
 ): Promise<void> {
   const streamer = new MessageStreamer(channel, sessionId);
   let currentToolName: string | null = null;
@@ -546,6 +567,7 @@ export async function handleOutputStream(
             { name: 'Cost', value: `$${cost}`, inline: true },
             { name: 'Duration', value: duration, inline: true },
             { name: 'Turns', value: `${turns}`, inline: true },
+            { name: 'Mode', value: { auto: '\u26A1 Auto', plan: '\uD83D\uDCCB Plan', normal: '\uD83D\uDEE1\uFE0F Normal' }[mode] || '\u26A1 Auto', inline: true },
           );
 
         if (result.session_id) {
@@ -566,6 +588,7 @@ export async function handleOutputStream(
           components.push(makeYesNoButtons(sessionId));
         }
 
+        components.push(makeModeButtons(sessionId, mode));
         components.push(makeCompletionButtons(sessionId));
 
         await channel.send({ embeds: [embed], components });

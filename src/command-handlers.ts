@@ -111,6 +111,7 @@ export async function handleClaude(interaction: ChatInputCommandInteraction): Pr
     case 'sync': return handleClaudeSync(interaction);
     case 'model': return handleClaudeModel(interaction);
     case 'verbose': return handleClaudeVerbose(interaction);
+    case 'mode': return handleClaudeMode(interaction);
     default:
       await interaction.reply({ content: `Unknown subcommand: ${sub}`, ephemeral: true });
   }
@@ -411,7 +412,8 @@ async function handleClaudeList(interaction: ChatInputCommandInteraction): Promi
   for (const [project, projectSessions] of grouped) {
     const lines = projectSessions.map(s => {
       const status = s.isGenerating ? '🟢 generating' : '⚪ idle';
-      return `**${s.id}** — ${status} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}`;
+      const modeEmoji = { auto: '\u26A1', plan: '\uD83D\uDCCB', normal: '\uD83D\uDEE1\uFE0F' }[s.mode] || '\u26A1';
+      return `**${s.id}** — ${status} ${modeEmoji} ${s.mode} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}`;
     });
     embed.addFields({ name: `📁 ${project}`, value: lines.join('\n') });
   }
@@ -452,7 +454,7 @@ async function handleClaudeContinue(interaction: ChatInputCommandInteraction): P
     const channel = interaction.channel as TextChannel;
     const stream = sessions.continueSession(session.id);
     await interaction.editReply('Continuing...');
-    await handleOutputStream(stream, channel, session.id, session.verbose);
+    await handleOutputStream(stream, channel, session.id, session.verbose, session.mode);
   } catch (err: unknown) {
     await interaction.editReply(`Error: ${(err as Error).message}`);
   }
@@ -573,6 +575,28 @@ async function handleClaudeVerbose(interaction: ChatInputCommandInteraction): Pr
     content: newValue
       ? 'Verbose mode **enabled** — tool calls and results will be shown.'
       : 'Verbose mode **disabled** — tool calls and results are now hidden.',
+    ephemeral: true,
+  });
+}
+
+const MODE_LABELS: Record<string, string> = {
+  auto: '\u26A1 Auto — full autonomy, no confirmations',
+  plan: '\uD83D\uDCCB Plan — always plans before executing changes',
+  normal: '\uD83D\uDEE1\uFE0F Normal — asks before destructive operations',
+};
+
+async function handleClaudeMode(interaction: ChatInputCommandInteraction): Promise<void> {
+  const session = sessions.getSessionByChannel(interaction.channelId);
+  if (!session) {
+    await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
+    return;
+  }
+
+  const mode = interaction.options.getString('mode', true) as 'auto' | 'plan' | 'normal';
+  sessions.setMode(session.id, mode);
+
+  await interaction.reply({
+    content: `Mode set to **${MODE_LABELS[mode]}**`,
     ephemeral: true,
   });
 }
@@ -759,7 +783,7 @@ export async function handleProject(interaction: ChatInputCommandInteraction): P
         const channel = interaction.channel as TextChannel;
         await interaction.editReply(`Running skill **${name}**...`);
         const stream = sessions.sendPrompt(session.id, expanded);
-        await handleOutputStream(stream, channel, session.id, session.verbose);
+        await handleOutputStream(stream, channel, session.id, session.verbose, session.mode);
       } catch (err: unknown) {
         await interaction.editReply(`Error: ${(err as Error).message}`);
       }

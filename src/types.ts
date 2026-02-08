@@ -25,6 +25,7 @@ export interface Session {
   model?: string;
   agentPersona?: string;
   verbose: boolean;
+  mode: SessionMode;
   isGenerating: boolean;
   createdAt: number;
   lastActivity: number;
@@ -42,11 +43,14 @@ export interface SessionPersistData {
   model?: string;
   agentPersona?: string;
   verbose?: boolean;
+  mode?: SessionMode;
   createdAt: number;
   lastActivity: number;
   messageCount: number;
   totalCost: number;
 }
+
+export type SessionMode = 'auto' | 'plan' | 'normal';
 
 export interface AgentPersona {
   name: string;

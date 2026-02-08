@@ -5,10 +5,16 @@ import { Store } from './persistence.ts';
 import { getAgent } from './agents.ts';
 import { getPersonality } from './project-manager.ts';
 import { sanitizeSessionName, resolvePath, isPathAllowed } from './utils.ts';
-import type { Session, SessionPersistData } from './types.ts';
+import type { Session, SessionPersistData, SessionMode } from './types.ts';
 import { config } from './config.ts';
 
 const SESSION_PREFIX = 'claude-';
+
+const MODE_PROMPTS: Record<SessionMode, string> = {
+  auto: '',
+  plan: 'You MUST use EnterPlanMode at the start of every task. Present your plan for user approval before making any code changes. Do not write or edit files until the user approves the plan.',
+  normal: 'Before performing destructive or significant operations (deleting files, running dangerous commands, making large refactors, writing to many files), use AskUserQuestion to confirm with the user first. Ask for explicit approval before proceeding with changes.',
+};
 const sessionStore = new Store<SessionPersistData[]>('sessions.json');
 
 const sessions = new Map<string, Session>();
@@ -44,6 +50,7 @@ export async function loadSessions(): Promise<void> {
     sessions.set(s.id, {
       ...s,
       verbose: s.verbose ?? false,
+      mode: s.mode ?? 'auto',
       isGenerating: false,
     });
     channelToSession.set(s.channelId, s.id);
@@ -74,6 +81,7 @@ async function saveSessions(): Promise<void> {
       model: s.model,
       agentPersona: s.agentPersona,
       verbose: s.verbose || undefined,
+      mode: s.mode !== 'auto' ? s.mode : undefined,
       createdAt: s.createdAt,
       lastActivity: s.lastActivity,
       messageCount: s.messageCount,
@@ -122,6 +130,7 @@ export async function createSession(
     tmuxName,
     claudeSessionId,
     verbose: false,
+    mode: 'auto',
     isGenerating: false,
     createdAt: Date.now(),
     lastActivity: Date.now(),
@@ -212,6 +221,14 @@ export function setVerbose(sessionId: string, verbose: boolean): void {
   }
 }
 
+export function setMode(sessionId: string, mode: SessionMode): void {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.mode = mode;
+    saveSessions();
+  }
+}
+
 export function setAgentPersona(sessionId: string, persona: string | undefined): void {
   const session = sessions.get(sessionId);
   if (session) {
@@ -233,7 +250,9 @@ function buildSystemPrompt(session: Session): string | { type: 'preset'; preset:
     if (agent?.systemPrompt) parts.push(agent.systemPrompt);
   }
 
-  // Use Claude Code's default system prompt and append our customizations
+  const modePrompt = MODE_PROMPTS[session.mode];
+  if (modePrompt) parts.push(modePrompt);
+
   if (parts.length > 0) {
     return { type: 'preset', preset: 'claude_code', append: parts.join('\n\n') };
   }

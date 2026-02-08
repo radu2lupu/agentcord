@@ -50,7 +50,7 @@ export async function handleMessage(message: Message): Promise<void> {
   try {
     const channel = message.channel as TextChannel;
     const stream = sessions.sendPrompt(session.id, content);
-    await handleOutputStream(stream, channel, session.id, session.verbose);
+    await handleOutputStream(stream, channel, session.id, session.verbose, session.mode);
   } catch (err: unknown) {
     await message.reply({
       content: `Error: ${(err as Error).message}`,

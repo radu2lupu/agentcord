@@ -5,7 +5,7 @@ import type {
 } from 'discord.js';
 import { config } from './config.ts';
 import * as sessions from './session-manager.ts';
-import { handleOutputStream, getExpandableContent } from './output-handler.ts';
+import { handleOutputStream, getExpandableContent, makeModeButtons } from './output-handler.ts';
 import { isUserAllowed, truncate } from './utils.ts';
 
 export async function handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -45,7 +45,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.continueSession(sessionId);
       await interaction.editReply('Continuing...');
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -85,7 +85,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, optionText);
       await interaction.editReply(`Selected option ${optionIndex + 1}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -109,7 +109,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, answer);
       await interaction.editReply(`Answered: **${truncate(answer, 100)}**`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -133,10 +133,51 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, answer);
       await interaction.editReply(`Answered: ${answer}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
+    return;
+  }
+
+  // Mode switch buttons
+  if (customId.startsWith('mode:')) {
+    const parts = customId.split(':');
+    const sessionId = parts[1];
+    const newMode = parts[2] as 'auto' | 'plan' | 'normal';
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    sessions.setMode(sessionId, newMode);
+
+    const labels: Record<string, string> = {
+      auto: '\u26A1 Auto — full autonomy',
+      plan: '\uD83D\uDCCB Plan — plans before changes',
+      normal: '\uD83D\uDEE1\uFE0F Normal — asks before destructive ops',
+    };
+
+    await interaction.reply({
+      content: `Mode switched to **${labels[newMode]}**`,
+      ephemeral: true,
+    });
+
+    // Update the original message's mode buttons
+    try {
+      const original = interaction.message;
+      const updatedComponents = original.components.map((row: any) => {
+        const first = row.components?.[0];
+        if (first?.customId?.startsWith('mode:')) {
+          return makeModeButtons(sessionId, newMode);
+        }
+        return row;
+      });
+      await original.edit({ components: updatedComponents as any });
+    } catch { /* message may be deleted */ }
+
     return;
   }
 
@@ -166,7 +207,7 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, selected);
       await interaction.editReply(`Answered: **${truncate(selected, 100)}**`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -188,7 +229,7 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, selected);
       await interaction.editReply(`Selected: ${truncate(selected, 100)}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
