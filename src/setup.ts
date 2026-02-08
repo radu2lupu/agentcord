@@ -357,19 +357,50 @@ export async function runSetup(): Promise<void> {
     }
   }
 
+  // ─── Step 10: Install Daemon ───
+
+  const installDaemon = await p.confirm({
+    message: 'Start agentcord as a background service? (auto-starts on boot, restarts on crash)',
+    initialValue: true,
+  });
+  if (p.isCancel(installDaemon)) cancelled();
+
+  if (installDaemon) {
+    s.start('Installing background service...');
+    try {
+      const { handleDaemon } = await import('./daemon.ts');
+      // Suppress clack output during daemon install — it logs its own messages
+      await handleDaemon('install');
+      s.stop(green('Background service installed and running'));
+    } catch (err: unknown) {
+      s.stop(`Service install failed: ${(err as Error).message}`);
+      p.log.warn(`You can install it later with: ${cyan('agentcord daemon install')}`);
+    }
+  }
+
   // ─── Done ───
 
-  p.note(
-    [
-      `Start the bot:  ${cyan('npm start')}`,
-      `Dev mode:       ${cyan('npm run dev')}`,
-      `Re-run setup:   ${cyan('npm run setup')}`,
+  const nextSteps = [
+    `Use ${bold('/claude new <name> <directory>')} in Discord to create your first session.`,
+  ];
+
+  if (!installDaemon) {
+    nextSteps.unshift(
+      `Start the bot:  ${cyan('agentcord')}`,
       '',
-      `Once running, use ${bold('/claude new <name> <directory>')} in Discord`,
-      `to create your first session.`,
-    ].join('\n'),
-    'Next Steps',
-  );
+    );
+  } else {
+    nextSteps.unshift(
+      `The bot is running in the background.`,
+      `Check status:   ${cyan('agentcord daemon status')}`,
+      `View logs:      ${cyan(`tail -f agentcord.log`)}`,
+      '',
+    );
+  }
+
+  nextSteps.push('', `Re-run setup:   ${cyan('agentcord setup')}`);
+
+  p.note(nextSteps.join('\n'), 'Next Steps');
 
   p.outro(green('Setup complete!'));
 }
