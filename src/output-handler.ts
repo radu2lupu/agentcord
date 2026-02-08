@@ -250,6 +250,73 @@ const STATUS_EMOJI: Record<string, string> = {
   deleted: '\uD83D\uDDD1\uFE0F',  // wastebasket
 };
 
+function renderAskUserQuestion(
+  toolInput: string,
+  sessionId: string,
+): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] } | null {
+  try {
+    const data = JSON.parse(toolInput);
+    const questions: Array<{
+      question: string;
+      header?: string;
+      options?: Array<{ label: string; description?: string }>;
+      multiSelect?: boolean;
+    }> = data.questions;
+    if (!questions?.length) return null;
+
+    const embeds: EmbedBuilder[] = [];
+    const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
+
+    for (const q of questions) {
+      const embed = new EmbedBuilder()
+        .setColor(0xf39c12)
+        .setTitle(q.header || 'Question')
+        .setDescription(q.question);
+
+      if (q.options?.length) {
+        // If 4 or fewer options, use buttons
+        if (q.options.length <= 4) {
+          const row = new ActionRowBuilder<ButtonBuilder>();
+          for (let i = 0; i < q.options.length; i++) {
+            row.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`answer:${sessionId}:${q.options[i].label}`)
+                .setLabel(q.options[i].label.slice(0, 80))
+                .setStyle(i === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            );
+          }
+          components.push(row);
+        } else {
+          // Use a select menu for more options
+          const menu = new StringSelectMenuBuilder()
+            .setCustomId(`answer-select:${sessionId}`)
+            .setPlaceholder('Select an option...');
+          for (const opt of q.options) {
+            menu.addOptions({
+              label: opt.label.slice(0, 100),
+              description: opt.description?.slice(0, 100),
+              value: opt.label,
+            });
+          }
+          components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu));
+        }
+
+        // Add descriptions to the embed
+        const optionLines = q.options
+          .map(o => o.description ? `**${o.label}** — ${o.description}` : `**${o.label}**`)
+          .join('\n');
+        embed.addFields({ name: 'Options', value: truncate(optionLines, 1000) });
+      }
+
+      embeds.push(embed);
+    }
+
+    return { embeds, components };
+  } catch {
+    return null;
+  }
+}
+
 function renderTaskToolEmbed(toolName: string, toolInput: string): EmbedBuilder | null {
   try {
     const data = JSON.parse(toolInput);
@@ -353,8 +420,14 @@ export async function handleOutputStream(
                   embeds: [taskEmbed],
                   components: [makeStopButton(sessionId)],
                 });
+              } else if (currentToolName === 'AskUserQuestion') {
+                const rendered = renderAskUserQuestion(currentToolInput, sessionId);
+                if (rendered) {
+                  rendered.components.push(makeStopButton(sessionId));
+                  await channel.send({ embeds: rendered.embeds, components: rendered.components });
+                }
               } else if (!isTaskTool) {
-                // Regular tool or user-facing tool — show raw JSON
+                // Regular tool or other user-facing tool — show raw JSON
                 const toolInput = currentToolInput;
                 const displayInput = toolInput.length > 1000
                   ? truncate(toolInput, 1000)

@@ -92,6 +92,30 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
     return;
   }
 
+  // AskUserQuestion answer buttons
+  if (customId.startsWith('answer:')) {
+    const parts = customId.split(':');
+    const sessionId = parts[1];
+    const answer = parts.slice(2).join(':'); // label may contain colons
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply();
+    try {
+      const channel = interaction.channel as TextChannel;
+      const stream = sessions.sendPrompt(sessionId, answer);
+      await interaction.editReply(`Answered: **${truncate(answer, 100)}**`);
+      await handleOutputStream(stream, channel, sessionId, session.verbose);
+    } catch (err: unknown) {
+      await interaction.editReply(`Error: ${(err as Error).message}`);
+    }
+    return;
+  }
+
   // Confirm buttons (yes/no)
   if (customId.startsWith('confirm:')) {
     const parts = customId.split(':');
@@ -126,6 +150,28 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
   }
 
   const customId = interaction.customId;
+
+  if (customId.startsWith('answer-select:')) {
+    const sessionId = customId.slice(14);
+    const selected = interaction.values[0];
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply();
+    try {
+      const channel = interaction.channel as TextChannel;
+      const stream = sessions.sendPrompt(sessionId, selected);
+      await interaction.editReply(`Answered: **${truncate(selected, 100)}**`);
+      await handleOutputStream(stream, channel, sessionId, session.verbose);
+    } catch (err: unknown) {
+      await interaction.editReply(`Error: ${(err as Error).message}`);
+    }
+    return;
+  }
 
   if (customId.startsWith('select:')) {
     const sessionId = customId.slice(7);
