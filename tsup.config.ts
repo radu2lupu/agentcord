@@ -1,0 +1,13 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig({
+  entry: ['src/cli.ts'],
+  format: 'esm',
+  target: 'node22',
+  clean: true,
+  outDir: 'dist',
+  splitting: true,
+  banner: {
+    js: "#!/usr/bin/env node",
+  },
+});
