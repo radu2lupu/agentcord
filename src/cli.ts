@@ -23,6 +23,11 @@ switch (command) {
     await startBot();
     break;
   }
+  case 'daemon': {
+    const { handleDaemon } = await import('./daemon.ts');
+    await handleDaemon(process.argv[3]);
+    break;
+  }
   case 'help':
   case '--help':
   case '-h': {
@@ -32,6 +37,7 @@ switch (command) {
   \x1b[1mUsage:\x1b[0m
     agentcord              Start the bot
     agentcord setup        Interactive configuration wizard
+    agentcord daemon       Manage background service (install/uninstall/status)
     agentcord help         Show this help message
 
   \x1b[1mQuick start:\x1b[0m
