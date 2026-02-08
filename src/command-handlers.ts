@@ -2,10 +2,15 @@ import {
   EmbedBuilder,
   ChannelType,
   type ChatInputCommandInteraction,
+  type AutocompleteInteraction,
   type TextChannel,
   type Guild,
   type CategoryChannel,
 } from 'discord.js';
+import { readdirSync, statSync, createReadStream } from 'node:fs';
+import { join, basename } from 'node:path';
+import { homedir } from 'node:os';
+import { createInterface } from 'node:readline';
 import { config } from './config.ts';
 import * as sessions from './session-manager.ts';
 import * as projectMgr from './project-manager.ts';
@@ -96,6 +101,7 @@ export async function handleClaude(interaction: ChatInputCommandInteraction): Pr
 
   switch (sub) {
     case 'new': return handleClaudeNew(interaction);
+    case 'resume': return handleClaudeResume(interaction);
     case 'list': return handleClaudeList(interaction);
     case 'end': return handleClaudeEnd(interaction);
     case 'continue': return handleClaudeContinue(interaction);
@@ -171,6 +177,214 @@ async function handleClaudeNew(interaction: ChatInputCommandInteraction): Promis
       try { await channel.delete(); } catch { /* best effort */ }
     }
     await interaction.editReply(`Failed to create session: ${(err as Error).message}`);
+  }
+}
+
+// Discover local Claude Code sessions for autocomplete
+
+interface LocalSession {
+  id: string;
+  project: string;
+  mtime: number;
+  firstMessage: string;
+}
+
+function discoverLocalSessions(): LocalSession[] {
+  const claudeDir = join(homedir(), '.claude', 'projects');
+  const results: LocalSession[] = [];
+
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(claudeDir);
+  } catch {
+    return [];
+  }
+
+  for (const projDir of projectDirs) {
+    const projPath = join(claudeDir, projDir);
+    let files: string[];
+    try {
+      files = readdirSync(projPath);
+    } catch {
+      continue;
+    }
+
+    // Decode project path: -Users-foo-bar → /Users/foo/bar → basename
+    const decoded = projDir.replace(/^-/, '/').replace(/-/g, '/');
+    const project = basename(decoded);
+
+    for (const file of files) {
+      if (!file.endsWith('.jsonl')) continue;
+      const sessionId = file.replace('.jsonl', '');
+      // Validate UUID format
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) continue;
+
+      try {
+        const mtime = statSync(join(projPath, file)).mtimeMs;
+        results.push({ id: sessionId, project, mtime, firstMessage: '' });
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  // Sort by most recent first
+  results.sort((a, b) => b.mtime - a.mtime);
+  return results;
+}
+
+async function getFirstUserMessage(sessionId: string): Promise<string> {
+  const claudeDir = join(homedir(), '.claude', 'projects');
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(claudeDir);
+  } catch {
+    return '';
+  }
+
+  for (const projDir of projectDirs) {
+    const filePath = join(claudeDir, projDir, `${sessionId}.jsonl`);
+    try {
+      statSync(filePath);
+    } catch {
+      continue;
+    }
+
+    return new Promise(resolve => {
+      const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
+      let found = false;
+      rl.on('line', line => {
+        if (found) return;
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type !== 'user') return;
+          const content = obj.message?.content;
+          if (typeof content === 'string' && content) {
+            found = true;
+            rl.close();
+            resolve(content.slice(0, 80));
+          } else if (Array.isArray(content)) {
+            for (const c of content) {
+              if (c?.text) {
+                found = true;
+                rl.close();
+                resolve(String(c.text).slice(0, 80));
+                return;
+              }
+            }
+          }
+        } catch { /* skip malformed lines */ }
+      });
+      rl.on('close', () => { if (!found) resolve(''); });
+      rl.on('error', () => resolve(''));
+    });
+  }
+  return '';
+}
+
+function formatTimeAgo(mtime: number): string {
+  const ago = Date.now() - mtime;
+  if (ago < 3600_000) return `${Math.floor(ago / 60_000)}m ago`;
+  if (ago < 86400_000) return `${Math.floor(ago / 3600_000)}h ago`;
+  return `${Math.floor(ago / 86400_000)}d ago`;
+}
+
+export async function handleClaudeAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  const focused = interaction.options.getFocused();
+  const localSessions = discoverLocalSessions();
+
+  // Filter by typed text
+  const filtered = focused
+    ? localSessions.filter(s =>
+        s.id.includes(focused.toLowerCase()) || s.project.toLowerCase().includes(focused.toLowerCase()))
+    : localSessions;
+
+  // Discord allows max 25 choices — get first messages for top results
+  const top = filtered.slice(0, 25);
+  const choices = await Promise.all(
+    top.map(async s => {
+      const firstMsg = await getFirstUserMessage(s.id);
+      const timeAgo = formatTimeAgo(s.mtime);
+      const label = firstMsg
+        ? `${s.project} (${timeAgo}) — ${firstMsg}`
+        : `${s.project} (${timeAgo})`;
+      return { name: label.slice(0, 100), value: s.id };
+    }),
+  );
+
+  await interaction.respond(choices);
+}
+
+async function handleClaudeResume(interaction: ChatInputCommandInteraction): Promise<void> {
+  const claudeSessionId = interaction.options.getString('session-id', true);
+  const name = interaction.options.getString('name', true);
+  const directory = interaction.options.getString('directory') || config.defaultDirectory;
+
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(claudeSessionId)) {
+    await interaction.reply({
+      content: 'Invalid session ID. Expected a UUID like `9815d35d-6508-476e-8c40-40effa4ffd6b`.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  let channel: TextChannel | undefined;
+
+  try {
+    const guild = interaction.guild!;
+    const projectName = projectNameFromDir(directory);
+
+    const { category } = await ensureProjectCategory(guild, projectName, directory);
+
+    const session = await sessions.createSession(name, directory, 'pending', projectName, claudeSessionId);
+
+    channel = await guild.channels.create({
+      name: `claude-${session.id}`,
+      type: ChannelType.GuildText,
+      parent: category.id,
+      topic: `Claude session (resumed) | Dir: ${directory}`,
+    }) as TextChannel;
+
+    sessions.linkChannel(session.id, channel.id);
+
+    const embed = new EmbedBuilder()
+      .setColor(0xe67e22)
+      .setTitle(`Session Resumed: ${session.id}`)
+      .addFields(
+        { name: 'Channel', value: `#claude-${session.id}`, inline: true },
+        { name: 'Directory', value: session.directory, inline: true },
+        { name: 'Project', value: projectName, inline: true },
+        { name: 'Claude Session', value: `\`${claudeSessionId}\``, inline: false },
+        { name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
+      );
+
+    await interaction.editReply({ embeds: [embed] });
+    log(`Session "${session.id}" (resumed ${claudeSessionId}) created by ${interaction.user.tag} in ${directory}`);
+
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xe67e22)
+          .setTitle('Claude Code Session (Resumed)')
+          .setDescription(
+            'This session is linked to an existing Claude Code conversation. ' +
+            'Type a message to continue the conversation from Discord.'
+          )
+          .addFields(
+            { name: 'Directory', value: `\`${session.directory}\``, inline: false },
+            { name: 'Claude Session', value: `\`${claudeSessionId}\``, inline: false },
+            { name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
+          ),
+      ],
+    });
+  } catch (err: unknown) {
+    if (channel) {
+      try { await channel.delete(); } catch { /* best effort */ }
+    }
+    await interaction.editReply(`Failed to resume session: ${(err as Error).message}`);
   }
 }
 

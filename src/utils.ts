@@ -94,15 +94,25 @@ export function detectNumberedOptions(text: string): string[] | null {
   const lines = text.trim().split('\n');
   const options: string[] = [];
   const optionRegex = /^\s*(\d+)[.)]\s+(.+)$/;
+  let firstOptionLine = -1;
 
-  for (const line of lines) {
-    const match = line.match(optionRegex);
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(optionRegex);
     if (match) {
+      if (firstOptionLine === -1) firstOptionLine = i;
       options.push(match[2].trim());
     }
   }
 
-  return options.length >= 2 ? options : null;
+  if (options.length < 2 || options.length > 6) return null;
+
+  // Only treat as interactive options if the text before the list
+  // contains a question or prompt asking the user to choose
+  const preamble = lines.slice(0, firstOptionLine).join(' ').toLowerCase();
+  const hasQuestion = /\?\s*$/.test(preamble.trim()) ||
+    /\b(which|choose|select|pick|prefer|would you like|how would you|what approach|option)\b/.test(preamble);
+
+  return hasQuestion ? options : null;
 }
 
 export function detectYesNoPrompt(text: string): boolean {

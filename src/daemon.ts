@@ -47,6 +47,7 @@ function generateMacPlist(workDir: string, logDir: string): string {
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
+        <string>--watch</string>
         <string>${cliPath}</string>
     </array>
     <key>WorkingDirectory</key>
@@ -83,7 +84,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${nodePath} ${cliPath}
+ExecStart=${nodePath} --watch ${cliPath}
 WorkingDirectory=${workDir}
 Restart=on-failure
 RestartSec=10

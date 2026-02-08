@@ -90,6 +90,7 @@ export async function createSession(
   directory: string,
   channelId: string,
   projectName: string,
+  claudeSessionId?: string,
 ): Promise<Session> {
   const resolvedDir = resolvePath(directory);
 
@@ -119,6 +120,7 @@ export async function createSession(
     directory: resolvedDir,
     projectName,
     tmuxName,
+    claudeSessionId,
     verbose: false,
     isGenerating: false,
     createdAt: Date.now(),

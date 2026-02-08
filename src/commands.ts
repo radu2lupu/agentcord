@@ -18,6 +18,15 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
         .addStringOption(opt =>
           opt.setName('directory').setDescription('Working directory (default: configured default)')))
     .addSubcommand(sub =>
+      sub.setName('resume')
+        .setDescription('Resume an existing Claude Code session from terminal')
+        .addStringOption(opt =>
+          opt.setName('session-id').setDescription('Claude Code session UUID').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('name').setDescription('Name for the Discord channel').setRequired(true))
+        .addStringOption(opt =>
+          opt.setName('directory').setDescription('Working directory (default: configured default)')))
+    .addSubcommand(sub =>
       sub.setName('list').setDescription('List active sessions'))
     .addSubcommand(sub =>
       sub.setName('end').setDescription('End the session in this channel'))
