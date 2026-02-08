@@ -1,0 +1,60 @@
+{
+  "name": "agentcord",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Discord bot for managing AI coding agent sessions (Claude Code, Codex, and more)",
+  "bin": {
+    "agentcord": "bin/agentcord.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "tsconfig.json",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "setup": "node --experimental-strip-types src/setup.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "dev": "node --experimental-strip-types --watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "discord",
+    "claude",
+    "claude-code",
+    "codex",
+    "ai",
+    "agent",
+    "coding-agent",
+    "tmux",
+    "cli",
+    "bot"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radu2lupu/agentcord.git"
+  },
+  "homepage": "https://github.com/radu2lupu/agentcord#readme",
+  "bugs": {
+    "url": "https://github.com/radu2lupu/agentcord/issues"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.36",
+    "@clack/prompts": "^1.0.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^17.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
