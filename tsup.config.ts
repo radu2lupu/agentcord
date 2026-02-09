@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsup';
 
-export default defineConfig({
+export default defineConfig((options) => ({
   entry: ['src/cli.ts'],
   format: 'esm',
   target: 'node22',
@@ -10,4 +10,9 @@ export default defineConfig({
   banner: {
     js: "#!/usr/bin/env node",
   },
-});
+  // In watch mode, ignore src/ and only rebuild when .restart is touched
+  ...(options.watch ? {
+    ignoreWatch: ['src'],
+    watch: ['.restart'],
+  } : {}),
+}));

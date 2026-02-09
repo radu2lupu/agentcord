@@ -14,6 +14,7 @@ import { createInterface } from 'node:readline';
 import { config } from './config.ts';
 import * as sessions from './session-manager.ts';
 import * as projectMgr from './project-manager.ts';
+import * as pluginMgr from './plugin-manager.ts';
 import { listAgents, getAgent } from './agents.ts';
 import { handleOutputStream } from './output-handler.ts';
 import { executeShellCommand, listProcesses, killProcess } from './shell-handler.ts';
@@ -119,7 +120,17 @@ export async function handleClaude(interaction: ChatInputCommandInteraction): Pr
 
 async function handleClaudeNew(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true);
-  const directory = interaction.options.getString('directory') || config.defaultDirectory;
+  let directory = interaction.options.getString('directory');
+
+  // If no directory specified, check if we're inside a project category
+  if (!directory) {
+    const parentId = (interaction.channel as TextChannel | null)?.parentId;
+    if (parentId) {
+      const project = projectMgr.getProjectByCategoryId(parentId);
+      if (project) directory = project.directory;
+    }
+    directory = directory || config.defaultDirectory;
+  }
 
   await interaction.deferReply();
 
@@ -857,5 +868,399 @@ export async function handleProject(interaction: ChatInputCommandInteraction): P
       await interaction.reply({ embeds: [embed], ephemeral: true });
       break;
     }
+  }
+}
+
+// /plugin commands
+
+export async function handlePlugin(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!isUserAllowed(interaction.user.id, config.allowedUsers, config.allowAllUsers)) {
+    await interaction.reply({ content: 'You are not authorized.', ephemeral: true });
+    return;
+  }
+
+  const sub = interaction.options.getSubcommand();
+
+  switch (sub) {
+    case 'browse': return handlePluginBrowse(interaction);
+    case 'install': return handlePluginInstall(interaction);
+    case 'remove': return handlePluginRemove(interaction);
+    case 'list': return handlePluginList(interaction);
+    case 'info': return handlePluginInfo(interaction);
+    case 'enable': return handlePluginEnable(interaction);
+    case 'disable': return handlePluginDisable(interaction);
+    case 'update': return handlePluginUpdate(interaction);
+    case 'marketplace-add': return handleMarketplaceAdd(interaction);
+    case 'marketplace-remove': return handleMarketplaceRemove(interaction);
+    case 'marketplace-list': return handleMarketplaceList(interaction);
+    case 'marketplace-update': return handleMarketplaceUpdate(interaction);
+    default:
+      await interaction.reply({ content: `Unknown subcommand: ${sub}`, ephemeral: true });
+  }
+}
+
+function resolveScopeAndCwd(interaction: ChatInputCommandInteraction): {
+  scope: 'user' | 'project' | 'local';
+  cwd?: string;
+  error?: string;
+} {
+  const scope = (interaction.options.getString('scope') || 'user') as 'user' | 'project' | 'local';
+  if (scope === 'user') return { scope };
+
+  const session = sessions.getSessionByChannel(interaction.channelId);
+  if (!session) {
+    return { scope, error: `Scope \`${scope}\` requires an active session. Run this from a session channel, or use \`user\` scope.` };
+  }
+  return { scope, cwd: session.directory };
+}
+
+async function handlePluginBrowse(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const search = interaction.options.getString('search')?.toLowerCase();
+    const { installed, available } = await pluginMgr.listAvailable();
+    const installedIds = new Set(installed.map(p => p.id));
+
+    let filtered = available;
+    if (search) {
+      filtered = available.filter(p =>
+        p.name.toLowerCase().includes(search) ||
+        p.description.toLowerCase().includes(search) ||
+        p.marketplaceName.toLowerCase().includes(search));
+    }
+
+    filtered.sort((a, b) => (b.installCount ?? 0) - (a.installCount ?? 0));
+
+    if (filtered.length === 0) {
+      await interaction.editReply('No plugins found matching your search.');
+      return;
+    }
+
+    const shown = filtered.slice(0, 15);
+    const embed = new EmbedBuilder()
+      .setColor(0x7c3aed)
+      .setTitle('Available Plugins')
+      .setDescription(`Showing ${shown.length} of ${filtered.length} plugins. Use \`/plugin install\` to install.`);
+
+    for (const p of shown) {
+      const status = installedIds.has(p.pluginId) ? ' \u2705' : '';
+      const count = p.installCount ? ` | ${p.installCount.toLocaleString()} installs` : '';
+      embed.addFields({
+        name: `${p.name}${status}`,
+        value: `${truncate(p.description, 150)}\n*${p.marketplaceName}*${count}`,
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err: unknown) {
+    await interaction.editReply(`Error: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginInstall(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  const { scope, cwd, error } = resolveScopeAndCwd(interaction);
+  if (error) {
+    await interaction.reply({ content: error, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.installPlugin(pluginId, scope, cwd);
+    const embed = new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('Plugin Installed')
+      .setDescription(`**${pluginId}** installed with \`${scope}\` scope.`)
+      .addFields({ name: 'Output', value: truncate(result, 1000) || 'Done.' });
+    await interaction.editReply({ embeds: [embed] });
+    log(`Plugin "${pluginId}" installed (scope=${scope}) by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to install: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginRemove(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  const { scope, cwd, error } = resolveScopeAndCwd(interaction);
+  if (error) {
+    await interaction.reply({ content: error, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.uninstallPlugin(pluginId, scope, cwd);
+    await interaction.editReply(`Plugin **${pluginId}** removed.\n${truncate(result, 500)}`);
+    log(`Plugin "${pluginId}" removed (scope=${scope}) by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to remove: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginList(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const plugins = await pluginMgr.listInstalled();
+    if (plugins.length === 0) {
+      await interaction.editReply('No plugins installed.');
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle(`Installed Plugins (${plugins.length})`);
+
+    for (const p of plugins) {
+      const icon = p.enabled ? '\u2705' : '\u274C';
+      const scopeLabel = p.scope.charAt(0).toUpperCase() + p.scope.slice(1);
+      const project = p.projectPath ? `\nProject: \`${p.projectPath}\`` : '';
+      embed.addFields({
+        name: `${icon} ${p.id}`,
+        value: `v${p.version} | ${scopeLabel} scope${project}`,
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err: unknown) {
+    await interaction.editReply(`Error: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginInfo(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    // Parse name@marketplace
+    const parts = pluginId.split('@');
+    const pluginName = parts[0];
+    const marketplaceName = parts[1];
+
+    // Check installed status
+    const installed = await pluginMgr.listInstalled();
+    const installedEntry = installed.find(p => p.id === pluginId);
+
+    // Get detail from marketplace
+    let detail: pluginMgr.MarketplacePluginDetail | null = null;
+    if (marketplaceName) {
+      detail = await pluginMgr.getPluginDetail(pluginName, marketplaceName);
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0xf39c12)
+      .setTitle(`Plugin: ${pluginName}`);
+
+    if (detail) {
+      embed.setDescription(detail.description);
+      if (detail.author) {
+        embed.addFields({ name: 'Author', value: detail.author.name, inline: true });
+      }
+      if (detail.category) {
+        embed.addFields({ name: 'Category', value: detail.category, inline: true });
+      }
+      if (detail.version) {
+        embed.addFields({ name: 'Version', value: detail.version, inline: true });
+      }
+      if (detail.tags?.length) {
+        embed.addFields({ name: 'Tags', value: detail.tags.join(', '), inline: false });
+      }
+      if (detail.homepage) {
+        embed.addFields({ name: 'Homepage', value: detail.homepage, inline: false });
+      }
+      if (detail.lspServers) {
+        embed.addFields({ name: 'LSP Servers', value: Object.keys(detail.lspServers).join(', '), inline: true });
+      }
+      if (detail.mcpServers) {
+        embed.addFields({ name: 'MCP Servers', value: Object.keys(detail.mcpServers).join(', '), inline: true });
+      }
+    }
+
+    if (installedEntry) {
+      const icon = installedEntry.enabled ? '\u2705 Enabled' : '\u274C Disabled';
+      embed.addFields(
+        { name: 'Status', value: `${icon} | v${installedEntry.version}`, inline: true },
+        { name: 'Scope', value: installedEntry.scope, inline: true },
+        { name: 'Installed', value: new Date(installedEntry.installedAt).toLocaleDateString(), inline: true },
+      );
+    } else {
+      embed.addFields({ name: 'Status', value: 'Not installed', inline: true });
+    }
+
+    if (marketplaceName) {
+      embed.setFooter({ text: `Marketplace: ${marketplaceName}` });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err: unknown) {
+    await interaction.editReply(`Error: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginEnable(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  const { scope, cwd, error } = resolveScopeAndCwd(interaction);
+  if (error) {
+    await interaction.reply({ content: error, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    await pluginMgr.enablePlugin(pluginId, scope, cwd);
+    await interaction.editReply(`Plugin **${pluginId}** enabled (\`${scope}\` scope).`);
+    log(`Plugin "${pluginId}" enabled (scope=${scope}) by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to enable: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginDisable(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  const { scope, cwd, error } = resolveScopeAndCwd(interaction);
+  if (error) {
+    await interaction.reply({ content: error, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    await pluginMgr.disablePlugin(pluginId, scope, cwd);
+    await interaction.editReply(`Plugin **${pluginId}** disabled (\`${scope}\` scope).`);
+    log(`Plugin "${pluginId}" disabled (scope=${scope}) by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to disable: ${(err as Error).message}`);
+  }
+}
+
+async function handlePluginUpdate(interaction: ChatInputCommandInteraction): Promise<void> {
+  const pluginId = interaction.options.getString('plugin', true);
+  const { scope, cwd, error } = resolveScopeAndCwd(interaction);
+  if (error) {
+    await interaction.reply({ content: error, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.updatePlugin(pluginId, scope, cwd);
+    await interaction.editReply(`Plugin **${pluginId}** updated.\n${truncate(result, 500)}`);
+    log(`Plugin "${pluginId}" updated (scope=${scope}) by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to update: ${(err as Error).message}`);
+  }
+}
+
+async function handleMarketplaceAdd(interaction: ChatInputCommandInteraction): Promise<void> {
+  const source = interaction.options.getString('source', true);
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.addMarketplace(source);
+    await interaction.editReply(`Marketplace added from \`${source}\`.\n${truncate(result, 500)}`);
+    log(`Marketplace "${source}" added by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to add marketplace: ${(err as Error).message}`);
+  }
+}
+
+async function handleMarketplaceRemove(interaction: ChatInputCommandInteraction): Promise<void> {
+  const name = interaction.options.getString('name', true);
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.removeMarketplace(name);
+    await interaction.editReply(`Marketplace **${name}** removed.\n${truncate(result, 500)}`);
+    log(`Marketplace "${name}" removed by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to remove marketplace: ${(err as Error).message}`);
+  }
+}
+
+async function handleMarketplaceList(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const marketplaces = await pluginMgr.listMarketplaces();
+    if (marketplaces.length === 0) {
+      await interaction.editReply('No marketplaces registered.');
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x9b59b6)
+      .setTitle(`Marketplaces (${marketplaces.length})`);
+
+    for (const m of marketplaces) {
+      const source = m.repo || m.url || m.source;
+      embed.addFields({
+        name: m.name,
+        value: `Source: \`${source}\`\nPath: \`${m.installLocation}\``,
+      });
+    }
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err: unknown) {
+    await interaction.editReply(`Error: ${(err as Error).message}`);
+  }
+}
+
+async function handleMarketplaceUpdate(interaction: ChatInputCommandInteraction): Promise<void> {
+  const name = interaction.options.getString('name') || undefined;
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    const result = await pluginMgr.updateMarketplaces(name);
+    await interaction.editReply(`Marketplace${name ? ` **${name}**` : 's'} updated.\n${truncate(result, 500)}`);
+    log(`Marketplace${name ? ` "${name}"` : 's'} updated by ${interaction.user.tag}`);
+  } catch (err: unknown) {
+    await interaction.editReply(`Failed to update: ${(err as Error).message}`);
+  }
+}
+
+// /plugin autocomplete
+
+export async function handlePluginAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+  const focused = interaction.options.getFocused().toLowerCase();
+
+  try {
+    if (sub === 'install' || (sub === 'info' && !focused.includes('@'))) {
+      // Show available plugins from marketplaces
+      const { available } = await pluginMgr.listAvailable();
+      const filtered = focused
+        ? available.filter(p =>
+            p.name.toLowerCase().includes(focused) ||
+            p.pluginId.toLowerCase().includes(focused) ||
+            p.description.toLowerCase().includes(focused))
+        : available;
+      filtered.sort((a, b) => (b.installCount ?? 0) - (a.installCount ?? 0));
+      const choices = filtered.slice(0, 25).map(p => ({
+        name: `${p.name} (${p.marketplaceName})`.slice(0, 100),
+        value: p.pluginId,
+      }));
+      await interaction.respond(choices);
+    } else if (['remove', 'enable', 'disable', 'update', 'info'].includes(sub)) {
+      // Show installed plugins
+      const installed = await pluginMgr.listInstalled();
+      const filtered = focused
+        ? installed.filter(p => p.id.toLowerCase().includes(focused))
+        : installed;
+      const choices = filtered.slice(0, 25).map(p => ({
+        name: `${p.id} (v${p.version}, ${p.scope})`.slice(0, 100),
+        value: p.id,
+      }));
+      await interaction.respond(choices);
+    } else if (sub === 'marketplace-remove' || sub === 'marketplace-update') {
+      const marketplaces = await pluginMgr.listMarketplaces();
+      const filtered = focused
+        ? marketplaces.filter(m => m.name.toLowerCase().includes(focused))
+        : marketplaces;
+      const choices = filtered.slice(0, 25).map(m => ({
+        name: m.name,
+        value: m.name,
+      }));
+      await interaction.respond(choices);
+    } else {
+      await interaction.respond([]);
+    }
+  } catch {
+    await interaction.respond([]);
   }
 }

@@ -95,16 +95,25 @@ export function detectNumberedOptions(text: string): string[] | null {
   const options: string[] = [];
   const optionRegex = /^\s*(\d+)[.)]\s+(.+)$/;
   let firstOptionLine = -1;
+  let lastOptionLine = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(optionRegex);
     if (match) {
       if (firstOptionLine === -1) firstOptionLine = i;
+      lastOptionLine = i;
       options.push(match[2].trim());
     }
   }
 
   if (options.length < 2 || options.length > 6) return null;
+
+  // Options should be short choice labels, not long descriptions
+  if (options.some(o => o.length > 80)) return null;
+
+  // The numbered list should be near the end of the text (not buried in the middle)
+  const linesAfter = lines.slice(lastOptionLine + 1).filter(l => l.trim()).length;
+  if (linesAfter > 3) return null;
 
   // Only treat as interactive options if the text before the list
   // contains a question or prompt asking the user to choose

@@ -153,11 +153,107 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
     .addSubcommand(sub =>
       sub.setName('info').setDescription('Show project configuration'));
 
+  const plugin = new SlashCommandBuilder()
+    .setName('plugin')
+    .setDescription('Manage Claude Code plugins')
+    .addSubcommand(sub =>
+      sub.setName('browse')
+        .setDescription('Browse available plugins from marketplaces')
+        .addStringOption(opt =>
+          opt.setName('search').setDescription('Filter by name or keyword')))
+    .addSubcommand(sub =>
+      sub.setName('install')
+        .setDescription('Install a plugin')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin name (e.g. feature-dev@claude-plugins-official)').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('scope').setDescription('Installation scope (default: user)')
+            .addChoices(
+              { name: 'User — available everywhere', value: 'user' },
+              { name: 'Project — this project only', value: 'project' },
+              { name: 'Local — this directory only', value: 'local' },
+            )))
+    .addSubcommand(sub =>
+      sub.setName('remove')
+        .setDescription('Uninstall a plugin')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin ID').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('scope').setDescription('Scope to uninstall from (default: user)')
+            .addChoices(
+              { name: 'User', value: 'user' },
+              { name: 'Project', value: 'project' },
+              { name: 'Local', value: 'local' },
+            )))
+    .addSubcommand(sub =>
+      sub.setName('list')
+        .setDescription('List installed plugins'))
+    .addSubcommand(sub =>
+      sub.setName('info')
+        .setDescription('Show detailed info for a plugin')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin name or ID').setRequired(true).setAutocomplete(true)))
+    .addSubcommand(sub =>
+      sub.setName('enable')
+        .setDescription('Enable a disabled plugin')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin ID').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('scope').setDescription('Scope (default: user)')
+            .addChoices(
+              { name: 'User', value: 'user' },
+              { name: 'Project', value: 'project' },
+              { name: 'Local', value: 'local' },
+            )))
+    .addSubcommand(sub =>
+      sub.setName('disable')
+        .setDescription('Disable a plugin')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin ID').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('scope').setDescription('Scope (default: user)')
+            .addChoices(
+              { name: 'User', value: 'user' },
+              { name: 'Project', value: 'project' },
+              { name: 'Local', value: 'local' },
+            )))
+    .addSubcommand(sub =>
+      sub.setName('update')
+        .setDescription('Update a plugin to latest version')
+        .addStringOption(opt =>
+          opt.setName('plugin').setDescription('Plugin ID').setRequired(true).setAutocomplete(true))
+        .addStringOption(opt =>
+          opt.setName('scope').setDescription('Scope (default: user)')
+            .addChoices(
+              { name: 'User', value: 'user' },
+              { name: 'Project', value: 'project' },
+              { name: 'Local', value: 'local' },
+            )))
+    .addSubcommand(sub =>
+      sub.setName('marketplace-add')
+        .setDescription('Add a plugin marketplace')
+        .addStringOption(opt =>
+          opt.setName('source').setDescription('GitHub repo (owner/repo) or git URL').setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('marketplace-remove')
+        .setDescription('Remove a marketplace')
+        .addStringOption(opt =>
+          opt.setName('name').setDescription('Marketplace name').setRequired(true).setAutocomplete(true)))
+    .addSubcommand(sub =>
+      sub.setName('marketplace-list')
+        .setDescription('List registered marketplaces'))
+    .addSubcommand(sub =>
+      sub.setName('marketplace-update')
+        .setDescription('Update marketplace catalogs')
+        .addStringOption(opt =>
+          opt.setName('name').setDescription('Specific marketplace (or all if omitted)').setAutocomplete(true)));
+
   return [
     claude.toJSON(),
     shell.toJSON(),
     agent.toJSON(),
     project.toJSON(),
+    plugin.toJSON(),
   ];
 }
 

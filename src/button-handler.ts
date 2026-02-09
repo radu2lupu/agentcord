@@ -1,11 +1,23 @@
-import type {
-  ButtonInteraction,
-  StringSelectMenuInteraction,
-  TextChannel,
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  type ButtonInteraction,
+  type StringSelectMenuInteraction,
+  type TextChannel,
 } from 'discord.js';
 import { config } from './config.ts';
 import * as sessions from './session-manager.ts';
-import { handleOutputStream, getExpandableContent, makeModeButtons } from './output-handler.ts';
+import {
+  handleOutputStream,
+  getExpandableContent,
+  makeModeButtons,
+  setPendingAnswer,
+  getPendingAnswers,
+  clearPendingAnswers,
+  getQuestionCount,
+} from './output-handler.ts';
 import { isUserAllowed, truncate } from './utils.ts';
 
 export async function handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -92,11 +104,105 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
     return;
   }
 
-  // AskUserQuestion answer buttons
+  // Multi-question: collect an answer without submitting
+  if (customId.startsWith('pick:')) {
+    const parts = customId.split(':');
+    const sessionId = parts[1];
+    const questionIndex = parseInt(parts[2], 10);
+    const answer = parts.slice(3).join(':');
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    setPendingAnswer(sessionId, questionIndex, answer);
+
+    const totalQuestions = getQuestionCount(sessionId);
+    const pending = getPendingAnswers(sessionId);
+    const answeredCount = pending?.size || 0;
+
+    // Update the original message to highlight the selected option
+    try {
+      const original = interaction.message;
+      const updatedComponents = original.components.map((row: any) => {
+        const firstComponent = row.components?.[0];
+        if (!firstComponent?.customId?.startsWith('pick:')) return row;
+        // Check if this row belongs to the current question
+        const rowQi = parseInt(firstComponent.customId.split(':')[2], 10);
+        if (rowQi !== questionIndex) return row;
+
+        const newRow = new ActionRowBuilder<ButtonBuilder>();
+        for (const btn of row.components) {
+          const btnAnswer = btn.customId.split(':').slice(3).join(':');
+          const isSelected = btnAnswer === answer;
+          newRow.addComponents(
+            new ButtonBuilder()
+              .setCustomId(btn.customId)
+              .setLabel(btn.label)
+              .setStyle(isSelected ? ButtonStyle.Success : ButtonStyle.Secondary),
+          );
+        }
+        return newRow;
+      });
+      await original.edit({ components: updatedComponents as any });
+    } catch { /* message may be deleted */ }
+
+    await interaction.reply({
+      content: `Selected for Q${questionIndex + 1}: **${truncate(answer, 100)}** (${answeredCount}/${totalQuestions} answered)`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Multi-question: submit all collected answers
+  if (customId.startsWith('submit-answers:')) {
+    const sessionId = customId.slice(15);
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    const totalQuestions = getQuestionCount(sessionId);
+    const pending = getPendingAnswers(sessionId);
+
+    if (!pending || pending.size === 0) {
+      await interaction.reply({ content: 'No answers selected yet. Pick an answer for each question first.', ephemeral: true });
+      return;
+    }
+
+    // Build a formatted answer string
+    const answerLines: string[] = [];
+    for (let i = 0; i < totalQuestions; i++) {
+      const ans = pending.get(i);
+      answerLines.push(`Q${i + 1}: ${ans || '(no answer)'}`);
+    }
+    const combined = answerLines.join('\n');
+
+    clearPendingAnswers(sessionId);
+
+    await interaction.deferReply();
+    try {
+      const channel = interaction.channel as TextChannel;
+      const stream = sessions.sendPrompt(sessionId, combined);
+      await interaction.editReply(`Submitted answers:\n${combined}`);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+    } catch (err: unknown) {
+      await interaction.editReply(`Error: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  // AskUserQuestion answer buttons (single question — immediate submit)
   if (customId.startsWith('answer:')) {
     const parts = customId.split(':');
     const sessionId = parts[1];
-    const answer = parts.slice(2).join(':'); // label may contain colons
+    // Format: answer:sessionId:questionIndex:label (questionIndex is numeric)
+    const hasQuestionIndex = /^\d+$/.test(parts[2]);
+    const answer = hasQuestionIndex ? parts.slice(3).join(':') : parts.slice(2).join(':');
 
     const session = sessions.getSession(sessionId);
     if (!session) {
@@ -192,8 +298,60 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
 
   const customId = interaction.customId;
 
+  // Multi-question: collect a select menu answer without submitting
+  if (customId.startsWith('pick-select:')) {
+    // Format: pick-select:sessionId:questionIndex
+    const parts = customId.split(':');
+    const sessionId = parts[1];
+    const questionIndex = parseInt(parts[2], 10);
+    const selected = interaction.values[0];
+
+    const session = sessions.getSession(sessionId);
+    if (!session) {
+      await interaction.reply({ content: 'Session not found.', ephemeral: true });
+      return;
+    }
+
+    setPendingAnswer(sessionId, questionIndex, selected);
+
+    const totalQuestions = getQuestionCount(sessionId);
+    const pending = getPendingAnswers(sessionId);
+    const answeredCount = pending?.size || 0;
+
+    // Update the original message's select menu placeholder to show selection
+    try {
+      const original = interaction.message;
+      const updatedComponents = original.components.map((row: any) => {
+        const comp = row.components?.[0];
+        if (comp?.customId !== customId) return row;
+        // Rebuild the select menu with updated placeholder
+        const menu = new StringSelectMenuBuilder()
+          .setCustomId(customId)
+          .setPlaceholder(`Selected: ${selected.slice(0, 80)}`);
+        for (const opt of comp.options) {
+          menu.addOptions({
+            label: opt.label,
+            description: opt.description || undefined,
+            value: opt.value,
+            default: opt.value === selected,
+          });
+        }
+        return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+      });
+      await original.edit({ components: updatedComponents as any });
+    } catch { /* message may be deleted */ }
+
+    await interaction.reply({
+      content: `Selected for Q${questionIndex + 1}: **${truncate(selected, 100)}** (${answeredCount}/${totalQuestions} answered)`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (customId.startsWith('answer-select:')) {
-    const sessionId = customId.slice(14);
+    // Format: answer-select:sessionId or answer-select:sessionId:questionIndex
+    const afterPrefix = customId.slice(14);
+    const sessionId = afterPrefix.includes(':') ? afterPrefix.split(':')[0] : afterPrefix;
     const selected = interaction.values[0];
 
     const session = sessions.getSession(sessionId);

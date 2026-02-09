@@ -1,4 +1,5 @@
 import {
+  AttachmentBuilder,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -7,6 +8,7 @@ import {
   type TextChannel,
   type Message,
 } from 'discord.js';
+import { existsSync } from 'node:fs';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { splitMessage, truncate, detectNumberedOptions, detectYesNoPrompt } from './utils.ts';
 import type { ExpandableContent } from './types.ts';
@@ -14,6 +16,31 @@ import type { ExpandableContent } from './types.ts';
 // In-memory store for expandable content (with TTL cleanup)
 const expandableStore = new Map<string, ExpandableContent>();
 let expandCounter = 0;
+
+// Pending answers for multi-question AskUserQuestion (sessionId → questionIndex → answer)
+const pendingAnswersStore = new Map<string, Map<number, string>>();
+// Total question count per session for multi-question flows
+const questionCountStore = new Map<string, number>();
+
+export function setPendingAnswer(sessionId: string, questionIndex: number, answer: string): void {
+  if (!pendingAnswersStore.has(sessionId)) {
+    pendingAnswersStore.set(sessionId, new Map());
+  }
+  pendingAnswersStore.get(sessionId)!.set(questionIndex, answer);
+}
+
+export function getPendingAnswers(sessionId: string): Map<number, string> | undefined {
+  return pendingAnswersStore.get(sessionId);
+}
+
+export function clearPendingAnswers(sessionId: string): void {
+  pendingAnswersStore.delete(sessionId);
+  questionCountStore.delete(sessionId);
+}
+
+export function getQuestionCount(sessionId: string): number {
+  return questionCountStore.get(sessionId) || 0;
+}
 
 // Clean up expired expandable content every 5 minutes
 setInterval(() => {
@@ -248,6 +275,21 @@ class MessageStreamer {
   }
 }
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
+
+function extractImagePath(toolName: string, toolInput: string): string | null {
+  try {
+    const data = JSON.parse(toolInput);
+    if (toolName === 'Write' || toolName === 'Read') {
+      const filePath: string = data.file_path;
+      if (filePath && IMAGE_EXTENSIONS.has(filePath.slice(filePath.lastIndexOf('.')).toLowerCase())) {
+        return filePath;
+      }
+    }
+  } catch { /* incomplete or invalid JSON */ }
+  return null;
+}
+
 // Tools that ask for user input — always shown regardless of verbose mode
 const USER_FACING_TOOLS = new Set([
   'AskUserQuestion',
@@ -284,10 +326,23 @@ function renderAskUserQuestion(
     }> = data.questions;
     if (!questions?.length) return null;
 
+    const isMulti = questions.length > 1;
+
+    // For multi-question, initialize pending answers tracking
+    if (isMulti) {
+      clearPendingAnswers(sessionId);
+      questionCountStore.set(sessionId, questions.length);
+    }
+
     const embeds: EmbedBuilder[] = [];
     const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
 
-    for (const q of questions) {
+    // Use pick: prefix for multi-question (collect answers), answer: for single (immediate submit)
+    const btnPrefix = isMulti ? 'pick' : 'answer';
+    const selectPrefix = isMulti ? 'pick-select' : 'answer-select';
+
+    for (let qi = 0; qi < questions.length; qi++) {
+      const q = questions[qi];
       const embed = new EmbedBuilder()
         .setColor(0xf39c12)
         .setTitle(q.header || 'Question')
@@ -300,7 +355,7 @@ function renderAskUserQuestion(
           for (let i = 0; i < q.options.length; i++) {
             row.addComponents(
               new ButtonBuilder()
-                .setCustomId(`answer:${sessionId}:${q.options[i].label}`)
+                .setCustomId(`${btnPrefix}:${sessionId}:${qi}:${q.options[i].label}`)
                 .setLabel(q.options[i].label.slice(0, 80))
                 .setStyle(i === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
             );
@@ -309,7 +364,7 @@ function renderAskUserQuestion(
         } else {
           // Use a select menu for more options
           const menu = new StringSelectMenuBuilder()
-            .setCustomId(`answer-select:${sessionId}`)
+            .setCustomId(`${selectPrefix}:${sessionId}:${qi}`)
             .setPlaceholder('Select an option...');
           for (const opt of q.options) {
             menu.addOptions({
@@ -329,6 +384,18 @@ function renderAskUserQuestion(
       }
 
       embeds.push(embed);
+    }
+
+    // For multi-question, add a Submit button
+    if (isMulti) {
+      components.push(
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`submit-answers:${sessionId}`)
+            .setLabel('Submit Answers')
+            .setStyle(ButtonStyle.Success),
+        ),
+      );
     }
 
     return { embeds, components };
@@ -395,6 +462,7 @@ export async function handleOutputStream(
   let currentToolName: string | null = null;
   let currentToolInput = '';
   let lastFinishedToolName: string | null = null;
+  let pendingImagePath: string | null = null;
 
   // Show "typing..." indicator while the agent is working
   channel.sendTyping().catch(() => {});
@@ -479,6 +547,9 @@ export async function handleOutputStream(
               }
             }
 
+            // Track image files written by tools
+            pendingImagePath = extractImagePath(currentToolName, currentToolInput);
+
             lastFinishedToolName = currentToolName;
             currentToolName = null;
             currentToolInput = '';
@@ -487,6 +558,18 @@ export async function handleOutputStream(
       }
 
       if (message.type === 'user') {
+        // Upload pending image file to Discord if it exists on disk
+        if (pendingImagePath && existsSync(pendingImagePath)) {
+          try {
+            await streamer.finalize();
+            const attachment = new AttachmentBuilder(pendingImagePath);
+            await channel.send({ files: [attachment] });
+          } catch { /* file may have been deleted or inaccessible */ }
+          pendingImagePath = null;
+        } else {
+          pendingImagePath = null;
+        }
+
         const showResult = verbose || (lastFinishedToolName !== null && TASK_TOOLS.has(lastFinishedToolName));
         if (!showResult) continue;
 

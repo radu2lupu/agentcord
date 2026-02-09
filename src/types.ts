@@ -82,3 +82,12 @@ export interface ExpandableContent {
   content: string;
   createdAt: number;
 }
+
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+export type TextBlock = { type: 'text'; text: string };
+export type ImageBlock = {
+  type: 'image';
+  source: { type: 'base64'; media_type: ImageMediaType; data: string };
+};
+export type ContentBlock = TextBlock | ImageBlock;

@@ -24,6 +24,10 @@ export function getAllProjects(): Record<string, Project> {
   return { ...projects };
 }
 
+export function getProjectByCategoryId(categoryId: string): Project | undefined {
+  return Object.values(projects).find(p => p.categoryId === categoryId);
+}
+
 export function getOrCreateProject(name: string, directory: string, categoryId: string): Project {
   if (!projects[name]) {
     projects[name] = {

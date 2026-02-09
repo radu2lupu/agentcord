@@ -5,7 +5,7 @@ import { Store } from './persistence.ts';
 import { getAgent } from './agents.ts';
 import { getPersonality } from './project-manager.ts';
 import { sanitizeSessionName, resolvePath, isPathAllowed } from './utils.ts';
-import type { Session, SessionPersistData, SessionMode } from './types.ts';
+import type { Session, SessionPersistData, SessionMode, ContentBlock } from './types.ts';
 import { config } from './config.ts';
 
 const SESSION_PREFIX = 'claude-';
@@ -263,7 +263,7 @@ function buildSystemPrompt(session: Session): string | { type: 'preset'; preset:
 
 export async function* sendPrompt(
   sessionId: string,
-  prompt: string,
+  prompt: string | ContentBlock[],
 ): AsyncGenerator<SDKMessage> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session "${sessionId}" not found`);
@@ -276,9 +276,24 @@ export async function* sendPrompt(
 
   const systemPrompt = buildSystemPrompt(session);
 
+  // When prompt contains content blocks (e.g. images), wrap in SDKUserMessage
+  // The SDK expects session_id: '' — session resumption is handled via the `resume` option
+  let queryPrompt: string | AsyncIterable<any>;
+  if (typeof prompt === 'string') {
+    queryPrompt = prompt;
+  } else {
+    const userMessage = {
+      type: 'user' as const,
+      message: { role: 'user' as const, content: prompt },
+      parent_tool_use_id: null,
+      session_id: '',
+    };
+    queryPrompt = (async function* () { yield userMessage; })();
+  }
+
   try {
     const stream = query({
-      prompt,
+      prompt: queryPrompt,
       options: {
         cwd: session.directory,
         resume: session.claudeSessionId,
