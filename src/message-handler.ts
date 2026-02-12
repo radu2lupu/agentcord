@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { config } from './config.ts';
 import * as sessions from './session-manager.ts';
 import { handleOutputStream } from './output-handler.ts';
-import { isUserAllowed } from './utils.ts';
+import { isUserAllowed, isAbortError } from './utils.ts';
 import type { ContentBlock, ImageMediaType } from './types.ts';
 
 const SUPPORTED_IMAGE_TYPES = new Set([
@@ -102,18 +102,8 @@ export async function handleMessage(message: Message): Promise<void> {
   // Interrupt current generation if active
   if (session.isGenerating) {
     sessions.abortSession(session.id);
-    // Wait for the abort to finish (up to 5s)
-    const deadline = Date.now() + 5000;
-    while (session.isGenerating && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    if (session.isGenerating) {
-      await message.reply({
-        content: 'Could not interrupt the current generation. Try `/session stop`.',
-        allowedMentions: { repliedUser: false },
-      });
-      return;
-    }
+    // Give a brief moment for the stream to wind down
+    await new Promise(r => setTimeout(r, 200));
   }
 
   const text = message.content.trim();
@@ -189,15 +179,11 @@ export async function handleMessage(message: Message): Promise<void> {
     const stream = sessions.sendPrompt(session.id, prompt);
     await handleOutputStream(stream, channel, session.id, session.verbose, session.mode, session.provider);
   } catch (err: unknown) {
-    const errMsg = (err as Error).message || '';
-    const isAbort = (err as Error).name === 'AbortError' || /abort|cancel|interrupt/i.test(errMsg);
-    if (isAbort) {
-      // User interrupted — session is still valid, don't reset
+    if (isAbortError(err)) {
       return;
     }
-    sessions.resetProviderSession(session.id);
     await message.reply({
-      content: `Error: ${errMsg}\n-# Session reset — next message will start a fresh provider session.`,
+      content: `Error: ${(err as Error).message || 'Unknown error'}`,
       allowedMentions: { repliedUser: false },
     });
   }

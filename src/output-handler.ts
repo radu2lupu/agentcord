@@ -10,8 +10,7 @@ import {
 } from 'discord.js';
 import { existsSync } from 'node:fs';
 import type { ProviderEvent, ProviderName } from './providers/types.ts';
-import { resetProviderSession } from './session-manager.ts';
-import { splitMessage, truncate, detectNumberedOptions, detectYesNoPrompt } from './utils.ts';
+import { splitMessage, truncate, detectNumberedOptions, detectYesNoPrompt, isAbortError } from './utils.ts';
 import type { ExpandableContent } from './types.ts';
 import {
   renderCommandExecutionEmbed,
@@ -19,19 +18,6 @@ import {
   renderReasoningEmbed,
   renderCodexTodoListEmbed,
 } from './codex-renderer.ts';
-
-// Abort detection — the SDK throws various errors on user cancellation
-const ABORT_PATTERNS = ['abort', 'cancel', 'interrupt', 'killed', 'signal'];
-
-function isAbortLike(err: unknown): boolean {
-  if ((err as Error).name === 'AbortError') return true;
-  const msg = ((err as Error).message || '').toLowerCase();
-  return ABORT_PATTERNS.some(p => msg.includes(p));
-}
-
-function isAbortError(errors: string[]): boolean {
-  return errors.some(e => ABORT_PATTERNS.some(p => e.toLowerCase().includes(p)));
-}
 
 // In-memory store for expandable content (with TTL cleanup)
 const expandableStore = new Map<string, ExpandableContent>();
@@ -654,12 +640,8 @@ export async function handleOutputStream(
             streamer.append(`\n\`\`\`\n${event.errors.join('\n')}\n\`\`\``);
           }
 
-          // Auto-reset provider session on failure so next message starts fresh
-          // But don't reset on user-initiated aborts — the session is still valid
-          if (!event.success && !isAbortError(event.errors)) {
-            resetProviderSession(sessionId);
-            streamer.append('\n-# Session reset — next message will start a fresh provider session.');
-          }
+          // Don't auto-reset — transient errors shouldn't wipe session context.
+          // The provider's own retry logic handles recoverable failures.
 
           await streamer.finalize();
 
@@ -698,13 +680,12 @@ export async function handleOutputStream(
   } catch (err: unknown) {
     await streamer.finalize();
 
-    const errMsg = (err as Error).message || '';
-    if (!isAbortLike(err)) {
-      resetProviderSession(sessionId);
+    if (!isAbortError(err)) {
+      const errMsg = (err as Error).message || '';
       const embed = new EmbedBuilder()
         .setColor(0xe74c3c)
         .setTitle('Error')
-        .setDescription(`\`\`\`\n${errMsg}\n\`\`\`\n-# Session reset — next message will start a fresh provider session.`);
+        .setDescription(`\`\`\`\n${errMsg}\n\`\`\``);
       await channel.send({ embeds: [embed] });
     }
   } finally {

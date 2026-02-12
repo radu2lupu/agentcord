@@ -4,7 +4,7 @@ import { ensureProvider, type ProviderEvent, type ProviderName, type ContentBloc
 import { Store } from './persistence.ts';
 import { getAgent } from './agents.ts';
 import { getPersonality } from './project-manager.ts';
-import { sanitizeSessionName, resolvePath, isPathAllowed } from './utils.ts';
+import { sanitizeSessionName, resolvePath, isPathAllowed, isAbortError } from './utils.ts';
 import type { Session, SessionPersistData, SessionMode } from './types.ts';
 import { config } from './config.ts';
 
@@ -324,7 +324,7 @@ export async function* sendPrompt(
 
     session.messageCount++;
   } catch (err: unknown) {
-    if ((err as Error).name === 'AbortError') {
+    if (isAbortError(err)) {
       // User cancelled — that's fine
     } else {
       throw err;
@@ -374,7 +374,7 @@ export async function* continueSession(
 
     session.messageCount++;
   } catch (err: unknown) {
-    if ((err as Error).name === 'AbortError') {
+    if (isAbortError(err)) {
       // cancelled
     } else {
       throw err;

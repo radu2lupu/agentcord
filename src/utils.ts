@@ -124,6 +124,18 @@ export function detectNumberedOptions(text: string): string[] | null {
   return hasQuestion ? options : null;
 }
 
+const ABORT_PATTERNS = ['abort', 'cancel', 'interrupt', 'killed', 'signal'];
+
+export function isAbortError(err: unknown): boolean {
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  const msg = ((err as Error).message || '').toLowerCase();
+  return ABORT_PATTERNS.some(p => msg.includes(p));
+}
+
+export function isAbortErrorMessage(messages: string[]): boolean {
+  return messages.some(m => ABORT_PATTERNS.some(p => m.toLowerCase().includes(p)));
+}
+
 export function detectYesNoPrompt(text: string): boolean {
   const lower = text.toLowerCase();
   return /\b(y\/n|yes\/no|confirm|proceed)\b/.test(lower) ||
