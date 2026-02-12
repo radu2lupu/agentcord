@@ -472,6 +472,7 @@ async function handleSessionEnd(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
+  const channel = interaction.channel;
   await interaction.deferReply();
   try {
     await sessions.endSession(session.id);
@@ -480,8 +481,10 @@ async function handleSessionEnd(interaction: ChatInputCommandInteraction): Promi
     // Give a moment for the reply to be visible, then delete the channel
     setTimeout(async () => {
       try {
-        await interaction.channel?.delete();
-      } catch { /* channel may already be deleted or missing permissions */ }
+        await channel?.delete();
+      } catch (err) {
+        log(`Failed to delete channel for session "${session.id}": ${(err as Error).message}`);
+      }
     }, 2000);
   } catch (err: unknown) {
     await interaction.editReply(`Failed to end session: ${(err as Error).message}`);

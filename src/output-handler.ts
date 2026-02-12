@@ -90,15 +90,6 @@ function makeStopButton(sessionId: string): ActionRowBuilder<ButtonBuilder> {
   );
 }
 
-function makeCompletionButtons(sessionId: string): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`continue:${sessionId}`)
-      .setLabel('Continue')
-      .setStyle(ButtonStyle.Primary),
-  );
-}
-
 function makeOptionButtons(sessionId: string, options: string[]): ActionRowBuilder<ButtonBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
   const maxOptions = Math.min(options.length, 10);
@@ -683,7 +674,6 @@ export async function handleOutputStream(
           }
 
           components.push(makeModeButtons(sessionId, mode));
-          components.push(makeCompletionButtons(sessionId));
 
           await channel.send({ components });
           break;

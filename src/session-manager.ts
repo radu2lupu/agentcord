@@ -393,9 +393,15 @@ export function abortSession(sessionId: string): boolean {
   const controller = (session as any)._controller as AbortController | undefined;
   if (controller) {
     controller.abort();
+  }
+  // Force-clear generating state — the SDK may not throw AbortError reliably
+  if (session.isGenerating) {
+    session.isGenerating = false;
+    delete (session as any)._controller;
+    saveSessions();
     return true;
   }
-  return false;
+  return !!controller;
 }
 
 // Tmux info for /session attach
