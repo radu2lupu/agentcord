@@ -57,7 +57,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.continueSession(sessionId);
       await interaction.editReply('Continuing...');
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -97,7 +97,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, optionText);
       await interaction.editReply(`Selected option ${optionIndex + 1}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -189,7 +189,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, combined);
       await interaction.editReply(`Submitted answers:\n${combined}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -215,7 +215,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, answer);
       await interaction.editReply(`Answered: **${truncate(answer, 100)}**`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -239,7 +239,7 @@ export async function handleButton(interaction: ButtonInteraction): Promise<void
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, answer);
       await interaction.editReply(`Answered: ${answer}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -365,7 +365,7 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, selected);
       await interaction.editReply(`Answered: **${truncate(selected, 100)}**`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }
@@ -387,7 +387,7 @@ export async function handleSelectMenu(interaction: StringSelectMenuInteraction)
       const channel = interaction.channel as TextChannel;
       const stream = sessions.sendPrompt(sessionId, selected);
       await interaction.editReply(`Selected: ${truncate(selected, 100)}`);
-      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode);
+      await handleOutputStream(stream, channel, sessionId, session.verbose, session.mode, session.provider);
     } catch (err: unknown) {
       await interaction.editReply(`Error: ${(err as Error).message}`);
     }

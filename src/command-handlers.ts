@@ -25,6 +25,7 @@ import {
   formatLastActivity,
   truncate,
 } from './utils.ts';
+import type { ProviderName } from './types.ts';
 
 // Logging callback (set by bot.ts)
 let logFn: (msg: string) => void = console.log;
@@ -90,9 +91,9 @@ async function ensureProjectCategory(
   return { category, logChannel };
 }
 
-// /claude commands
+// /session commands
 
-export async function handleClaude(interaction: ChatInputCommandInteraction): Promise<void> {
+export async function handleSession(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!isUserAllowed(interaction.user.id, config.allowedUsers, config.allowAllUsers)) {
     await interaction.reply({ content: 'You are not authorized to use this bot.', ephemeral: true });
     return;
@@ -101,25 +102,37 @@ export async function handleClaude(interaction: ChatInputCommandInteraction): Pr
   const sub = interaction.options.getSubcommand();
 
   switch (sub) {
-    case 'new': return handleClaudeNew(interaction);
-    case 'resume': return handleClaudeResume(interaction);
-    case 'list': return handleClaudeList(interaction);
-    case 'end': return handleClaudeEnd(interaction);
-    case 'continue': return handleClaudeContinue(interaction);
-    case 'stop': return handleClaudeStop(interaction);
-    case 'output': return handleClaudeOutput(interaction);
-    case 'attach': return handleClaudeAttach(interaction);
-    case 'sync': return handleClaudeSync(interaction);
-    case 'model': return handleClaudeModel(interaction);
-    case 'verbose': return handleClaudeVerbose(interaction);
-    case 'mode': return handleClaudeMode(interaction);
+    case 'new': return handleSessionNew(interaction);
+    case 'resume': return handleSessionResume(interaction);
+    case 'list': return handleSessionList(interaction);
+    case 'end': return handleSessionEnd(interaction);
+    case 'continue': return handleSessionContinue(interaction);
+    case 'stop': return handleSessionStop(interaction);
+    case 'output': return handleSessionOutput(interaction);
+    case 'attach': return handleSessionAttach(interaction);
+    case 'sync': return handleSessionSync(interaction);
+    case 'id': return handleSessionId(interaction);
+    case 'model': return handleSessionModel(interaction);
+    case 'verbose': return handleSessionVerbose(interaction);
+    case 'mode': return handleSessionMode(interaction);
     default:
       await interaction.reply({ content: `Unknown subcommand: ${sub}`, ephemeral: true });
   }
 }
 
-async function handleClaudeNew(interaction: ChatInputCommandInteraction): Promise<void> {
+const PROVIDER_LABELS: Record<ProviderName, string> = {
+  claude: 'Claude Code',
+  codex: 'OpenAI Codex',
+};
+
+const PROVIDER_COLORS: Record<ProviderName, number> = {
+  claude: 0x3498db,
+  codex: 0x10a37f,
+};
+
+async function handleSessionNew(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true);
+  const provider = (interaction.options.getString('provider') || 'claude') as ProviderName;
   let directory = interaction.options.getString('directory');
 
   // If no directory specified, check if we're inside a project category
@@ -144,45 +157,51 @@ async function handleClaudeNew(interaction: ChatInputCommandInteraction): Promis
 
     // Create session first (handles name deduplication)
     // Use a temp channel ID, we'll update it after creating the channel
-    const session = await sessions.createSession(name, directory, 'pending', projectName);
+    const session = await sessions.createSession(name, directory, 'pending', projectName, provider);
 
     // Create Discord channel with the deduplicated session ID
     channel = await guild.channels.create({
-      name: `claude-${session.id}`,
+      name: `${provider}-${session.id}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      topic: `Claude session | Dir: ${directory}`,
+      topic: `${PROVIDER_LABELS[provider]} session | Dir: ${directory}`,
     }) as TextChannel;
 
     // Link the real channel ID
     sessions.linkChannel(session.id, channel.id);
 
+    const fields = [
+      { name: 'Channel', value: `#${provider}-${session.id}`, inline: true },
+      { name: 'Provider', value: PROVIDER_LABELS[provider], inline: true },
+      { name: 'Directory', value: session.directory, inline: true },
+      { name: 'Project', value: projectName, inline: true },
+    ];
+    if (session.tmuxName) {
+      fields.push({ name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
+    }
+
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
       .setTitle(`Session Created: ${session.id}`)
-      .addFields(
-        { name: 'Channel', value: `#claude-${session.id}`, inline: true },
-        { name: 'Directory', value: session.directory, inline: true },
-        { name: 'Project', value: projectName, inline: true },
-        { name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
-      );
+      .addFields(fields);
 
     await interaction.editReply({ embeds: [embed] });
-    log(`Session "${session.id}" created by ${interaction.user.tag} in ${directory}`);
+    log(`Session "${session.id}" (${provider}) created by ${interaction.user.tag} in ${directory}`);
 
     // Welcome message in the new channel
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x3498db)
-          .setTitle('Claude Code Session')
-          .setDescription('Type a message to send it to Claude. Use `/claude stop` to cancel generation.')
-          .addFields(
-            { name: 'Directory', value: `\`${session.directory}\``, inline: false },
-            { name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
-          ),
-      ],
-    });
+    const welcomeEmbed = new EmbedBuilder()
+      .setColor(PROVIDER_COLORS[provider])
+      .setTitle(`${PROVIDER_LABELS[provider]} Session`)
+      .setDescription(`Type a message to send it to the AI. Use \`/session stop\` to cancel generation.`);
+    const welcomeFields = [
+      { name: 'Directory', value: `\`${session.directory}\``, inline: false },
+    ];
+    if (session.tmuxName) {
+      welcomeFields.push({ name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
+    }
+    welcomeEmbed.addFields(welcomeFields);
+
+    await channel.send({ embeds: [welcomeEmbed] });
   } catch (err: unknown) {
     // Clean up on failure
     if (channel) {
@@ -301,7 +320,7 @@ function formatTimeAgo(mtime: number): string {
   return `${Math.floor(ago / 86400_000)}d ago`;
 }
 
-export async function handleClaudeAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+export async function handleSessionAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   const focused = interaction.options.getFocused();
   const localSessions = discoverLocalSessions();
 
@@ -327,18 +346,22 @@ export async function handleClaudeAutocomplete(interaction: AutocompleteInteract
   await interaction.respond(choices);
 }
 
-async function handleClaudeResume(interaction: ChatInputCommandInteraction): Promise<void> {
-  const claudeSessionId = interaction.options.getString('session-id', true);
+async function handleSessionResume(interaction: ChatInputCommandInteraction): Promise<void> {
+  const providerSessionId = interaction.options.getString('session-id', true);
   const name = interaction.options.getString('name', true);
+  const provider = (interaction.options.getString('provider') || 'claude') as ProviderName;
   const directory = interaction.options.getString('directory') || config.defaultDirectory;
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(claudeSessionId)) {
-    await interaction.reply({
-      content: 'Invalid session ID. Expected a UUID like `9815d35d-6508-476e-8c40-40effa4ffd6b`.',
-      ephemeral: true,
-    });
-    return;
+  // Only validate UUID format for Claude sessions
+  if (provider === 'claude') {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(providerSessionId)) {
+      await interaction.reply({
+        content: 'Invalid session ID. Expected a UUID like `9815d35d-6508-476e-8c40-40effa4ffd6b`.',
+        ephemeral: true,
+      });
+      return;
+    }
   }
 
   await interaction.deferReply();
@@ -351,45 +374,54 @@ async function handleClaudeResume(interaction: ChatInputCommandInteraction): Pro
 
     const { category } = await ensureProjectCategory(guild, projectName, directory);
 
-    const session = await sessions.createSession(name, directory, 'pending', projectName, claudeSessionId);
+    const session = await sessions.createSession(name, directory, 'pending', projectName, provider, providerSessionId);
 
     channel = await guild.channels.create({
-      name: `claude-${session.id}`,
+      name: `${provider}-${session.id}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      topic: `Claude session (resumed) | Dir: ${directory}`,
+      topic: `${PROVIDER_LABELS[provider]} session (resumed) | Dir: ${directory}`,
     }) as TextChannel;
 
     sessions.linkChannel(session.id, channel.id);
 
+    const fields = [
+      { name: 'Channel', value: `#${provider}-${session.id}`, inline: true },
+      { name: 'Provider', value: PROVIDER_LABELS[provider], inline: true },
+      { name: 'Directory', value: session.directory, inline: true },
+      { name: 'Project', value: projectName, inline: true },
+      { name: 'Provider Session', value: `\`${providerSessionId}\``, inline: false },
+    ];
+    if (session.tmuxName) {
+      fields.push({ name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
+    }
+
     const embed = new EmbedBuilder()
       .setColor(0xe67e22)
       .setTitle(`Session Resumed: ${session.id}`)
-      .addFields(
-        { name: 'Channel', value: `#claude-${session.id}`, inline: true },
-        { name: 'Directory', value: session.directory, inline: true },
-        { name: 'Project', value: projectName, inline: true },
-        { name: 'Claude Session', value: `\`${claudeSessionId}\``, inline: false },
-        { name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
-      );
+      .addFields(fields);
 
     await interaction.editReply({ embeds: [embed] });
-    log(`Session "${session.id}" (resumed ${claudeSessionId}) created by ${interaction.user.tag} in ${directory}`);
+    log(`Session "${session.id}" (${provider}, resumed ${providerSessionId}) created by ${interaction.user.tag} in ${directory}`);
+
+    const welcomeFields = [
+      { name: 'Directory', value: `\`${session.directory}\``, inline: false },
+      { name: 'Provider Session', value: `\`${providerSessionId}\``, inline: false },
+    ];
+    if (session.tmuxName) {
+      welcomeFields.push({ name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
+    }
 
     await channel.send({
       embeds: [
         new EmbedBuilder()
           .setColor(0xe67e22)
-          .setTitle('Claude Code Session (Resumed)')
+          .setTitle(`${PROVIDER_LABELS[provider]} Session (Resumed)`)
           .setDescription(
-            'This session is linked to an existing Claude Code conversation. ' +
+            `This session is linked to an existing ${PROVIDER_LABELS[provider]} conversation. ` +
             'Type a message to continue the conversation from Discord.'
           )
-          .addFields(
-            { name: 'Directory', value: `\`${session.directory}\``, inline: false },
-            { name: 'Claude Session', value: `\`${claudeSessionId}\``, inline: false },
-            { name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false },
-          ),
+          .addFields(welcomeFields),
       ],
     });
   } catch (err: unknown) {
@@ -400,7 +432,7 @@ async function handleClaudeResume(interaction: ChatInputCommandInteraction): Pro
   }
 }
 
-async function handleClaudeList(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionList(interaction: ChatInputCommandInteraction): Promise<void> {
   const allSessions = sessions.getAllSessions();
 
   if (allSessions.length === 0) {
@@ -424,7 +456,8 @@ async function handleClaudeList(interaction: ChatInputCommandInteraction): Promi
     const lines = projectSessions.map(s => {
       const status = s.isGenerating ? '🟢 generating' : '⚪ idle';
       const modeEmoji = { auto: '\u26A1', plan: '\uD83D\uDCCB', normal: '\uD83D\uDEE1\uFE0F' }[s.mode] || '\u26A1';
-      return `**${s.id}** — ${status} ${modeEmoji} ${s.mode} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}`;
+      const providerTag = `[${s.provider}]`;
+      return `**${s.id}** ${providerTag} — ${status} ${modeEmoji} ${s.mode} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}`;
     });
     embed.addFields({ name: `📁 ${project}`, value: lines.join('\n') });
   }
@@ -432,7 +465,7 @@ async function handleClaudeList(interaction: ChatInputCommandInteraction): Promi
   await interaction.reply({ embeds: [embed] });
 }
 
-async function handleClaudeEnd(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionEnd(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -442,14 +475,20 @@ async function handleClaudeEnd(interaction: ChatInputCommandInteraction): Promis
   await interaction.deferReply();
   try {
     await sessions.endSession(session.id);
-    await interaction.editReply(`Session "${session.id}" ended. You can delete this channel.`);
     log(`Session "${session.id}" ended by ${interaction.user.tag}`);
+    await interaction.editReply(`Session "${session.id}" ended. Deleting channel...`);
+    // Give a moment for the reply to be visible, then delete the channel
+    setTimeout(async () => {
+      try {
+        await interaction.channel?.delete();
+      } catch { /* channel may already be deleted or missing permissions */ }
+    }, 2000);
   } catch (err: unknown) {
     await interaction.editReply(`Failed to end session: ${(err as Error).message}`);
   }
 }
 
-async function handleClaudeContinue(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionContinue(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -465,13 +504,13 @@ async function handleClaudeContinue(interaction: ChatInputCommandInteraction): P
     const channel = interaction.channel as TextChannel;
     const stream = sessions.continueSession(session.id);
     await interaction.editReply('Continuing...');
-    await handleOutputStream(stream, channel, session.id, session.verbose, session.mode);
+    await handleOutputStream(stream, channel, session.id, session.verbose, session.mode, session.provider);
   } catch (err: unknown) {
     await interaction.editReply(`Error: ${(err as Error).message}`);
   }
 }
 
-async function handleClaudeStop(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionStop(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -485,7 +524,7 @@ async function handleClaudeStop(interaction: ChatInputCommandInteraction): Promi
   });
 }
 
-async function handleClaudeOutput(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionOutput(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -493,12 +532,12 @@ async function handleClaudeOutput(interaction: ChatInputCommandInteraction): Pro
   }
 
   await interaction.reply({
-    content: 'Conversation history is managed by the Claude Code SDK. Use `/claude attach` to view the full terminal history.',
+    content: 'Conversation history is managed by the provider SDK. Use `/session attach` to view the full terminal history.',
     ephemeral: true,
   });
 }
 
-async function handleClaudeAttach(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionAttach(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -507,7 +546,10 @@ async function handleClaudeAttach(interaction: ChatInputCommandInteraction): Pro
 
   const info = sessions.getAttachInfo(session.id);
   if (!info) {
-    await interaction.reply({ content: 'Session not found.', ephemeral: true });
+    await interaction.reply({
+      content: `Terminal attach is not available for ${PROVIDER_LABELS[session.provider]} sessions.`,
+      ephemeral: true,
+    });
     return;
   }
 
@@ -528,7 +570,7 @@ async function handleClaudeAttach(interaction: ChatInputCommandInteraction): Pro
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
-async function handleClaudeSync(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionSync(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
 
   const guild = interaction.guild!;
@@ -547,10 +589,10 @@ async function handleClaudeSync(interaction: ChatInputCommandInteraction): Promi
       name: `claude-${tmuxSession.id}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      topic: `Claude session (synced) | Dir: ${tmuxSession.directory}`,
+      topic: `Claude Code session (synced) | Dir: ${tmuxSession.directory}`,
     });
 
-    await sessions.createSession(tmuxSession.id, tmuxSession.directory, channel.id, projectName);
+    await sessions.createSession(tmuxSession.id, tmuxSession.directory, channel.id, projectName, 'claude');
     synced++;
   }
 
@@ -561,7 +603,29 @@ async function handleClaudeSync(interaction: ChatInputCommandInteraction): Promi
   );
 }
 
-async function handleClaudeModel(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionId(interaction: ChatInputCommandInteraction): Promise<void> {
+  const session = sessions.getSessionByChannel(interaction.channelId);
+  if (!session) {
+    await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
+    return;
+  }
+
+  const providerSessionId = session.providerSessionId;
+  if (!providerSessionId) {
+    await interaction.reply({
+      content: 'No provider session ID yet. Send a message first to initialize the session.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    content: `**Provider session ID** (${session.provider}):\n\`${providerSessionId}\``,
+    ephemeral: true,
+  });
+}
+
+async function handleSessionModel(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -573,7 +637,7 @@ async function handleClaudeModel(interaction: ChatInputCommandInteraction): Prom
   await interaction.reply({ content: `Model set to \`${model}\` for this session.`, ephemeral: true });
 }
 
-async function handleClaudeVerbose(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionVerbose(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -596,7 +660,7 @@ const MODE_LABELS: Record<string, string> = {
   normal: '\uD83D\uDEE1\uFE0F Normal — asks before destructive operations',
 };
 
-async function handleClaudeMode(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSessionMode(interaction: ChatInputCommandInteraction): Promise<void> {
   const session = sessions.getSessionByChannel(interaction.channelId);
   if (!session) {
     await interaction.reply({ content: 'No session in this channel.', ephemeral: true });
@@ -794,7 +858,7 @@ export async function handleProject(interaction: ChatInputCommandInteraction): P
         const channel = interaction.channel as TextChannel;
         await interaction.editReply(`Running skill **${name}**...`);
         const stream = sessions.sendPrompt(session.id, expanded);
-        await handleOutputStream(stream, channel, session.id, session.verbose, session.mode);
+        await handleOutputStream(stream, channel, session.id, session.verbose, session.mode, session.provider);
       } catch (err: unknown) {
         await interaction.editReply(`Error: ${(err as Error).message}`);
       }

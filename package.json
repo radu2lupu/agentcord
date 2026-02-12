@@ -53,6 +53,9 @@
     "dotenv": "^17.2.4",
     "sharp": "^0.34.5"
   },
+  "optionalDependencies": {
+    "@openai/codex-sdk": "^0.98.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "tsup": "^8.5.1",

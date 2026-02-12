@@ -357,7 +357,26 @@ export async function runSetup(): Promise<void> {
     }
   }
 
-  // ─── Step 10: Install Daemon ───
+  // ─── Step 10: Optional Providers ───
+
+  const installCodex = await p.confirm({
+    message: 'Install OpenAI Codex support? (requires @openai/codex-sdk)',
+    initialValue: false,
+  });
+  if (p.isCancel(installCodex)) cancelled();
+
+  if (installCodex) {
+    s.start('Installing @openai/codex-sdk...');
+    try {
+      execSync('npm install @openai/codex-sdk', { cwd: process.cwd(), stdio: 'pipe' });
+      s.stop(green('Codex SDK installed'));
+    } catch (err: unknown) {
+      s.stop(`Failed to install Codex SDK: ${(err as Error).message}`);
+      p.log.warn(`You can install it manually: ${cyan('npm install @openai/codex-sdk')}`);
+    }
+  }
+
+  // ─── Step 11: Install Daemon ───
 
   const installDaemon = await p.confirm({
     message: 'Start agentcord as a background service? (auto-starts on boot, restarts on crash)',
@@ -381,7 +400,7 @@ export async function runSetup(): Promise<void> {
   // ─── Done ───
 
   const nextSteps = [
-    `Use ${bold('/claude new <name> <directory>')} in Discord to create your first session.`,
+    `Use ${bold('/session new <name>')} in Discord to create your first session.`,
   ];
 
   if (!installDaemon) {

@@ -1,14 +1,14 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { ensureProvider, type ProviderEvent, type ProviderName, type ContentBlock } from './providers/index.ts';
 import { Store } from './persistence.ts';
 import { getAgent } from './agents.ts';
 import { getPersonality } from './project-manager.ts';
 import { sanitizeSessionName, resolvePath, isPathAllowed } from './utils.ts';
-import type { Session, SessionPersistData, SessionMode, ContentBlock } from './types.ts';
+import type { Session, SessionPersistData, SessionMode } from './types.ts';
 import { config } from './config.ts';
 
-const SESSION_PREFIX = 'claude-';
+const SESSION_PREFIX = 'agentcord-';
 
 const MODE_PROMPTS: Record<SessionMode, string> = {
   auto: '',
@@ -46,23 +46,31 @@ export async function loadSessions(): Promise<void> {
   if (!data) return;
 
   for (const s of data) {
-    const exists = await tmuxSessionExists(s.tmuxName);
+    // Migration: handle old claudeSessionId field and missing provider
+    const provider: ProviderName = s.provider ?? 'claude';
+    const providerSessionId = s.providerSessionId ?? (s as any).claudeSessionId;
+
+    // Only manage tmux for providers that use it
+    if (provider === 'claude') {
+      const exists = await tmuxSessionExists(s.tmuxName);
+      if (!exists) {
+        try {
+          await tmux('new-session', '-d', '-s', s.tmuxName, '-c', s.directory);
+        } catch {
+          console.warn(`Could not recreate tmux session ${s.tmuxName}`);
+        }
+      }
+    }
+
     sessions.set(s.id, {
       ...s,
+      provider,
+      providerSessionId,
       verbose: s.verbose ?? false,
       mode: s.mode ?? 'auto',
       isGenerating: false,
     });
     channelToSession.set(s.channelId, s.id);
-
-    // If tmux session is gone, recreate it
-    if (!exists) {
-      try {
-        await tmux('new-session', '-d', '-s', s.tmuxName, '-c', s.directory);
-      } catch {
-        console.warn(`Could not recreate tmux session ${s.tmuxName}`);
-      }
-    }
   }
 
   console.log(`Restored ${sessions.size} session(s)`);
@@ -76,8 +84,9 @@ async function saveSessions(): Promise<void> {
       channelId: s.channelId,
       directory: s.directory,
       projectName: s.projectName,
+      provider: s.provider,
       tmuxName: s.tmuxName,
-      claudeSessionId: s.claudeSessionId,
+      providerSessionId: s.providerSessionId,
       model: s.model,
       agentPersona: s.agentPersona,
       verbose: s.verbose || undefined,
@@ -98,7 +107,8 @@ export async function createSession(
   directory: string,
   channelId: string,
   projectName: string,
-  claudeSessionId?: string,
+  provider: ProviderName = 'claude',
+  providerSessionId?: string,
 ): Promise<Session> {
   const resolvedDir = resolvePath(directory);
 
@@ -109,26 +119,32 @@ export async function createSession(
     throw new Error(`Directory does not exist: ${resolvedDir}`);
   }
 
+  // Validate the provider is available
+  const providerInstance = await ensureProvider(provider);
+  const usesTmux = providerInstance.supports('tmux');
+
   // Auto-deduplicate: append -2, -3, etc. if name is taken
   let id = sanitizeSessionName(name);
-  let tmuxName = `${SESSION_PREFIX}${id}`;
+  let tmuxName = usesTmux ? `${SESSION_PREFIX}${id}` : '';
   let suffix = 1;
-  while (sessions.has(id) || await tmuxSessionExists(tmuxName)) {
+  while (sessions.has(id) || (usesTmux && await tmuxSessionExists(tmuxName))) {
     suffix++;
     id = sanitizeSessionName(`${name}-${suffix}`);
-    tmuxName = `${SESSION_PREFIX}${id}`;
+    if (usesTmux) tmuxName = `${SESSION_PREFIX}${id}`;
   }
 
-  // Create tmux session with a shell in the directory
-  await tmux('new-session', '-d', '-s', tmuxName, '-c', resolvedDir);
+  if (usesTmux) {
+    await tmux('new-session', '-d', '-s', tmuxName, '-c', resolvedDir);
+  }
 
   const session: Session = {
     id,
     channelId,
     directory: resolvedDir,
     projectName,
+    provider,
     tmuxName,
-    claudeSessionId,
+    providerSessionId,
     verbose: false,
     mode: 'auto',
     isGenerating: false,
@@ -167,11 +183,13 @@ export async function endSession(id: string): Promise<void> {
     (session as any)._controller.abort();
   }
 
-  // Kill tmux
-  try {
-    await tmux('kill-session', '-t', session.tmuxName);
-  } catch {
-    // Already dead
+  // Kill tmux only if it was created
+  if (session.tmuxName) {
+    try {
+      await tmux('kill-session', '-t', session.tmuxName);
+    } catch {
+      // Already dead
+    }
   }
 
   channelToSession.delete(session.channelId);
@@ -237,9 +255,9 @@ export function setAgentPersona(sessionId: string, persona: string | undefined):
   }
 }
 
-// Build system prompt from project personality + agent persona
+// Build system prompt parts from project personality + agent persona + mode
 
-function buildSystemPrompt(session: Session): string | { type: 'preset'; preset: 'claude_code'; append?: string } {
+function buildSystemPromptParts(session: Session): string[] {
   const parts: string[] = [];
 
   const personality = getPersonality(session.projectName);
@@ -253,18 +271,23 @@ function buildSystemPrompt(session: Session): string | { type: 'preset'; preset:
   const modePrompt = MODE_PROMPTS[session.mode];
   if (modePrompt) parts.push(modePrompt);
 
-  if (parts.length > 0) {
-    return { type: 'preset', preset: 'claude_code', append: parts.join('\n\n') };
-  }
-  return { type: 'preset', preset: 'claude_code' };
+  return parts;
 }
 
-// Claude Code SDK interaction
+export function resetProviderSession(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.providerSessionId = undefined;
+    saveSessions();
+  }
+}
+
+// Provider-delegated prompt sending
 
 export async function* sendPrompt(
   sessionId: string,
   prompt: string | ContentBlock[],
-): AsyncGenerator<SDKMessage> {
+): AsyncGenerator<ProviderEvent> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session "${sessionId}" not found`);
   if (session.isGenerating) throw new Error('Session is already generating');
@@ -274,54 +297,29 @@ export async function* sendPrompt(
   session.isGenerating = true;
   session.lastActivity = Date.now();
 
-  const systemPrompt = buildSystemPrompt(session);
-
-  // When prompt contains content blocks (e.g. images), wrap in SDKUserMessage
-  // The SDK expects session_id: '' — session resumption is handled via the `resume` option
-  let queryPrompt: string | AsyncIterable<any>;
-  if (typeof prompt === 'string') {
-    queryPrompt = prompt;
-  } else {
-    const userMessage = {
-      type: 'user' as const,
-      message: { role: 'user' as const, content: prompt },
-      parent_tool_use_id: null,
-      session_id: '',
-    };
-    queryPrompt = (async function* () { yield userMessage; })();
-  }
+  const provider = await ensureProvider(session.provider);
+  const systemPromptParts = buildSystemPromptParts(session);
 
   try {
-    const stream = query({
-      prompt: queryPrompt,
-      options: {
-        cwd: session.directory,
-        resume: session.claudeSessionId,
-        abortController: controller,
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        model: session.model,
-        systemPrompt: systemPrompt,
-        includePartialMessages: true,
-        settingSources: ['user', 'project', 'local'],
-      },
+    const stream = provider.sendPrompt(prompt, {
+      directory: session.directory,
+      providerSessionId: session.providerSessionId,
+      model: session.model,
+      systemPromptParts,
+      abortController: controller,
     });
 
-    for await (const message of stream) {
-      // Capture session ID from init message
-      if (message.type === 'system' && 'subtype' in message && message.subtype === 'init') {
-        session.claudeSessionId = message.session_id;
+    for await (const event of stream) {
+      // Capture provider session ID
+      if (event.type === 'session_init') {
+        session.providerSessionId = event.providerSessionId || undefined;
         await saveSessions();
       }
-
-      // Track cost from result
-      if (message.type === 'result') {
-        if ('total_cost_usd' in message) {
-          session.totalCost += message.total_cost_usd;
-        }
+      // Track cost
+      if (event.type === 'result') {
+        session.totalCost += event.costUsd;
       }
-
-      yield message;
+      yield event;
     }
 
     session.messageCount++;
@@ -341,7 +339,7 @@ export async function* sendPrompt(
 
 export async function* continueSession(
   sessionId: string,
-): AsyncGenerator<SDKMessage> {
+): AsyncGenerator<ProviderEvent> {
   const session = sessions.get(sessionId);
   if (!session) throw new Error(`Session "${sessionId}" not found`);
   if (session.isGenerating) throw new Error('Session is already generating');
@@ -351,34 +349,27 @@ export async function* continueSession(
   session.isGenerating = true;
   session.lastActivity = Date.now();
 
-  const systemPrompt = buildSystemPrompt(session);
+  const provider = await ensureProvider(session.provider);
+  const systemPromptParts = buildSystemPromptParts(session);
 
   try {
-    const stream = query({
-      prompt: '',
-      options: {
-        cwd: session.directory,
-        continue: true,
-        resume: session.claudeSessionId,
-        abortController: controller,
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
-        model: session.model,
-        systemPrompt: systemPrompt,
-        includePartialMessages: true,
-        settingSources: ['user', 'project', 'local'],
-      },
+    const stream = provider.continueSession({
+      directory: session.directory,
+      providerSessionId: session.providerSessionId,
+      model: session.model,
+      systemPromptParts,
+      abortController: controller,
     });
 
-    for await (const message of stream) {
-      if (message.type === 'system' && 'subtype' in message && message.subtype === 'init') {
-        session.claudeSessionId = message.session_id;
+    for await (const event of stream) {
+      if (event.type === 'session_init') {
+        session.providerSessionId = event.providerSessionId || undefined;
         await saveSessions();
       }
-      if (message.type === 'result' && 'total_cost_usd' in message) {
-        session.totalCost += message.total_cost_usd;
+      if (event.type === 'result') {
+        session.totalCost += event.costUsd;
       }
-      yield message;
+      yield event;
     }
 
     session.messageCount++;
@@ -407,14 +398,14 @@ export function abortSession(sessionId: string): boolean {
   return false;
 }
 
-// Tmux info for /claude attach
+// Tmux info for /session attach
 
 export function getAttachInfo(sessionId: string): { command: string; sessionId?: string } | null {
   const session = sessions.get(sessionId);
-  if (!session) return null;
+  if (!session || !session.tmuxName) return null;
   return {
     command: `tmux attach -t ${session.tmuxName}`,
-    sessionId: session.claudeSessionId,
+    sessionId: session.providerSessionId,
   };
 }
 

@@ -10,7 +10,7 @@ import {
 } from 'discord.js';
 import { config } from './config.ts';
 import { registerCommands } from './commands.ts';
-import { handleClaude, handleClaudeAutocomplete, handleShell, handleAgent, handleProject, handlePlugin, handlePluginAutocomplete, setLogger } from './command-handlers.ts';
+import { handleSession, handleSessionAutocomplete, handleShell, handleAgent, handleProject, handlePlugin, handlePluginAutocomplete, setLogger } from './command-handlers.ts';
 import { handleMessage } from './message-handler.ts';
 import { handleButton, handleSelectMenu } from './button-handler.ts';
 import { loadSessions, getAllSessions, unlinkChannel } from './session-manager.ts';
@@ -100,7 +100,7 @@ export async function startBot(): Promise<void> {
     try {
       if (interaction.type === InteractionType.ApplicationCommand && interaction.isChatInputCommand()) {
         switch (interaction.commandName) {
-          case 'claude': return await handleClaude(interaction);
+          case 'session': return await handleSession(interaction);
           case 'shell': return await handleShell(interaction);
           case 'agent': return await handleAgent(interaction);
           case 'project': return await handleProject(interaction);
@@ -109,8 +109,8 @@ export async function startBot(): Promise<void> {
       }
 
       if (interaction.isAutocomplete()) {
-        if (interaction.commandName === 'claude') {
-          return await handleClaudeAutocomplete(interaction);
+        if (interaction.commandName === 'session') {
+          return await handleSessionAutocomplete(interaction);
         }
         if (interaction.commandName === 'plugin') {
           return await handlePluginAutocomplete(interaction);

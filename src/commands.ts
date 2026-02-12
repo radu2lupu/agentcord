@@ -7,23 +7,35 @@ import {
 import { config } from './config.ts';
 
 export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
-  const claude = new SlashCommandBuilder()
-    .setName('claude')
-    .setDescription('Manage Claude Code sessions')
+  const session = new SlashCommandBuilder()
+    .setName('session')
+    .setDescription('Manage AI coding sessions')
     .addSubcommand(sub =>
       sub.setName('new')
-        .setDescription('Create a new Claude Code session')
+        .setDescription('Create a new coding session')
         .addStringOption(opt =>
           opt.setName('name').setDescription('Session name').setRequired(true))
+        .addStringOption(opt =>
+          opt.setName('provider').setDescription('AI provider')
+            .addChoices(
+              { name: 'Claude Code', value: 'claude' },
+              { name: 'OpenAI Codex', value: 'codex' },
+            ))
         .addStringOption(opt =>
           opt.setName('directory').setDescription('Working directory (default: configured default)')))
     .addSubcommand(sub =>
       sub.setName('resume')
-        .setDescription('Resume an existing Claude Code session from terminal')
+        .setDescription('Resume an existing session from terminal')
         .addStringOption(opt =>
-          opt.setName('session-id').setDescription('Claude Code session UUID').setRequired(true).setAutocomplete(true))
+          opt.setName('session-id').setDescription('Provider session ID').setRequired(true).setAutocomplete(true))
         .addStringOption(opt =>
           opt.setName('name').setDescription('Name for the Discord channel').setRequired(true))
+        .addStringOption(opt =>
+          opt.setName('provider').setDescription('AI provider')
+            .addChoices(
+              { name: 'Claude Code', value: 'claude' },
+              { name: 'OpenAI Codex', value: 'codex' },
+            ))
         .addStringOption(opt =>
           opt.setName('directory').setDescription('Working directory (default: configured default)')))
     .addSubcommand(sub =>
@@ -47,7 +59,9 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
       sub.setName('model')
         .setDescription('Change the model for this session')
         .addStringOption(opt =>
-          opt.setName('model').setDescription('Model name (e.g. claude-sonnet-4-5-20250929)').setRequired(true)))
+          opt.setName('model').setDescription('Model name (e.g. claude-sonnet-4-5-20250929, gpt-5.3-codex)').setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('id').setDescription('Show the provider session ID for this channel'))
     .addSubcommand(sub =>
       sub.setName('verbose').setDescription('Toggle showing tool calls and results in this session'))
     .addSubcommand(sub =>
@@ -56,9 +70,9 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
         .addStringOption(opt =>
           opt.setName('mode').setDescription('Session mode').setRequired(true)
             .addChoices(
-              { name: 'Auto — full autonomy', value: 'auto' },
-              { name: 'Plan — plan before executing', value: 'plan' },
-              { name: 'Normal — ask before destructive ops', value: 'normal' },
+              { name: 'Auto \u2014 full autonomy', value: 'auto' },
+              { name: 'Plan \u2014 plan before executing', value: 'plan' },
+              { name: 'Normal \u2014 ask before destructive ops', value: 'normal' },
             )));
 
   const shell = new SlashCommandBuilder()
@@ -169,9 +183,9 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
         .addStringOption(opt =>
           opt.setName('scope').setDescription('Installation scope (default: user)')
             .addChoices(
-              { name: 'User — available everywhere', value: 'user' },
-              { name: 'Project — this project only', value: 'project' },
-              { name: 'Local — this directory only', value: 'local' },
+              { name: 'User \u2014 available everywhere', value: 'user' },
+              { name: 'Project \u2014 this project only', value: 'project' },
+              { name: 'Local \u2014 this directory only', value: 'local' },
             )))
     .addSubcommand(sub =>
       sub.setName('remove')
@@ -249,7 +263,7 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
           opt.setName('name').setDescription('Specific marketplace (or all if omitted)').setAutocomplete(true)));
 
   return [
-    claude.toJSON(),
+    session.toJSON(),
     shell.toJSON(),
     agent.toJSON(),
     project.toJSON(),

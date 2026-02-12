@@ -1,3 +1,8 @@
+import type { ProviderName } from './providers/types.ts';
+
+// Re-export content block types from providers (used by message-handler, etc.)
+export type { ContentBlock, ImageMediaType, TextBlock, ImageBlock, LocalImageBlock, ProviderName } from './providers/types.ts';
+
 export interface McpServer {
   name: string;
   command: string;
@@ -20,8 +25,9 @@ export interface Session {
   channelId: string;
   directory: string;
   projectName: string;
+  provider: ProviderName;
   tmuxName: string;
-  claudeSessionId?: string;
+  providerSessionId?: string;
   model?: string;
   agentPersona?: string;
   verbose: boolean;
@@ -38,8 +44,9 @@ export interface SessionPersistData {
   channelId: string;
   directory: string;
   projectName: string;
+  provider?: ProviderName;
   tmuxName: string;
-  claudeSessionId?: string;
+  providerSessionId?: string;
   model?: string;
   agentPersona?: string;
   verbose?: boolean;
@@ -82,12 +89,3 @@ export interface ExpandableContent {
   content: string;
   createdAt: number;
 }
-
-export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
-
-export type TextBlock = { type: 'text'; text: string };
-export type ImageBlock = {
-  type: 'image';
-  source: { type: 'base64'; media_type: ImageMediaType; data: string };
-};
-export type ContentBlock = TextBlock | ImageBlock;

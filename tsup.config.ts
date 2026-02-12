@@ -7,6 +7,7 @@ export default defineConfig((options) => ({
   clean: true,
   outDir: 'dist',
   splitting: true,
+  external: ['@openai/codex-sdk'],
   banner: {
     js: "#!/usr/bin/env node",
   },
