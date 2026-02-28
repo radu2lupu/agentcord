@@ -22,6 +22,23 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
               { name: 'OpenAI Codex', value: 'codex' },
             ))
         .addStringOption(opt =>
+          opt.setName('sandbox-mode').setDescription('Codex sandbox mode (Codex provider only)')
+            .addChoices(
+              { name: 'Read-only', value: 'read-only' },
+              { name: 'Workspace write', value: 'workspace-write' },
+              { name: 'Danger full access', value: 'danger-full-access' },
+            ))
+        .addStringOption(opt =>
+          opt.setName('approval-policy').setDescription('Codex approval policy (Codex provider only)')
+            .addChoices(
+              { name: 'Never ask', value: 'never' },
+              { name: 'On request', value: 'on-request' },
+              { name: 'On failure', value: 'on-failure' },
+              { name: 'Untrusted', value: 'untrusted' },
+            ))
+        .addBooleanOption(opt =>
+          opt.setName('network-access').setDescription('Allow network in workspace-write sandbox (Codex only)'))
+        .addStringOption(opt =>
           opt.setName('directory').setDescription('Working directory (default: configured default)')))
     .addSubcommand(sub =>
       sub.setName('resume')
@@ -36,6 +53,23 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
               { name: 'Claude Code', value: 'claude' },
               { name: 'OpenAI Codex', value: 'codex' },
             ))
+        .addStringOption(opt =>
+          opt.setName('sandbox-mode').setDescription('Codex sandbox mode (Codex provider only)')
+            .addChoices(
+              { name: 'Read-only', value: 'read-only' },
+              { name: 'Workspace write', value: 'workspace-write' },
+              { name: 'Danger full access', value: 'danger-full-access' },
+            ))
+        .addStringOption(opt =>
+          opt.setName('approval-policy').setDescription('Codex approval policy (Codex provider only)')
+            .addChoices(
+              { name: 'Never ask', value: 'never' },
+              { name: 'On request', value: 'on-request' },
+              { name: 'On failure', value: 'on-failure' },
+              { name: 'Untrusted', value: 'untrusted' },
+            ))
+        .addBooleanOption(opt =>
+          opt.setName('network-access').setDescription('Allow network in workspace-write sandbox (Codex only)'))
         .addStringOption(opt =>
           opt.setName('directory').setDescription('Working directory (default: configured default)')))
     .addSubcommand(sub =>

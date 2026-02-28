@@ -118,7 +118,14 @@ ALLOWED_USERS=123456789,987654321      # Comma-separated user IDs
 ALLOW_ALL_USERS=false                  # Or true to skip whitelist
 ALLOWED_PATHS=/Users/me/Dev            # Restrict accessible directories
 DEFAULT_DIRECTORY=/Users/me/Dev        # Default for new sessions
+CODEX_SANDBOX_MODE=workspace-write     # read-only | workspace-write | danger-full-access
+CODEX_APPROVAL_POLICY=on-request       # never | on-request | on-failure | untrusted
+CODEX_NETWORK_ACCESS_ENABLED=true      # true | false
 ```
+
+You can also override Codex policy per session when creating/resuming via:
+- `/session new ... sandbox-mode:<mode> approval-policy:<policy> network-access:<bool>`
+- `/session resume ... sandbox-mode:<mode> approval-policy:<policy> network-access:<bool>`
 
 ## Development
 

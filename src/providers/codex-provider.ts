@@ -120,6 +120,11 @@ export class CodexProvider implements Provider {
         skipGitRepoCheck: true,
       };
       if (options.model) threadOptions.model = options.model;
+      if (options.sandboxMode) threadOptions.sandboxMode = options.sandboxMode;
+      if (options.approvalPolicy) threadOptions.approvalPolicy = options.approvalPolicy;
+      if (options.networkAccessEnabled !== undefined) {
+        threadOptions.networkAccessEnabled = options.networkAccessEnabled;
+      }
 
       const thread = options.providerSessionId
         ? codex.resumeThread(options.providerSessionId, threadOptions)
@@ -153,6 +158,11 @@ export class CodexProvider implements Provider {
         skipGitRepoCheck: true,
       };
       if (options.model) threadOptions.model = options.model;
+      if (options.sandboxMode) threadOptions.sandboxMode = options.sandboxMode;
+      if (options.approvalPolicy) threadOptions.approvalPolicy = options.approvalPolicy;
+      if (options.networkAccessEnabled !== undefined) {
+        threadOptions.networkAccessEnabled = options.networkAccessEnabled;
+      }
       const thread = codex.resumeThread(options.providerSessionId, threadOptions);
       const { events } = await thread.runStreamed('Continue from where you left off.');
 

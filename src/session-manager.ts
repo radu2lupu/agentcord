@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { ensureProvider, type ProviderEvent, type ProviderName, type ContentBlock } from './providers/index.ts';
+import type { CodexApprovalPolicy, CodexSandboxMode } from './providers/types.ts';
 import { Store } from './persistence.ts';
 import { getAgent } from './agents.ts';
 import { getPersonality } from './project-manager.ts';
@@ -19,6 +20,7 @@ const sessionStore = new Store<SessionPersistData[]>('sessions.json');
 
 const sessions = new Map<string, Session>();
 const channelToSession = new Map<string, string>();
+let saveQueue: Promise<void> = Promise.resolve();
 
 // Async tmux helper — never blocks the event loop
 function tmux(...args: string[]): Promise<string> {
@@ -39,13 +41,29 @@ async function tmuxSessionExists(tmuxName: string): Promise<boolean> {
   }
 }
 
+function isPlaceholderChannelId(channelId: string | undefined): boolean {
+  return !channelId || channelId === 'pending';
+}
+
 // Persistence
 
 export async function loadSessions(): Promise<void> {
   const data = await sessionStore.read();
   if (!data) return;
 
+  let cleaned = false;
   for (const s of data) {
+    if (isPlaceholderChannelId(s.channelId)) {
+      cleaned = true;
+      console.warn(`Skipping invalid persisted session "${s.id}" (missing channel ID).`);
+      continue;
+    }
+    if (channelToSession.has(s.channelId)) {
+      cleaned = true;
+      console.warn(`Skipping duplicate persisted session "${s.id}" (channel ${s.channelId} already linked).`);
+      continue;
+    }
+
     // Migration: handle old claudeSessionId field and missing provider
     const provider: ProviderName = s.provider ?? 'claude';
     const providerSessionId = s.providerSessionId ?? (s as any).claudeSessionId;
@@ -73,12 +91,17 @@ export async function loadSessions(): Promise<void> {
     channelToSession.set(s.channelId, s.id);
   }
 
+  if (cleaned) {
+    await saveSessions();
+  }
+
   console.log(`Restored ${sessions.size} session(s)`);
 }
 
-async function saveSessions(): Promise<void> {
+async function persistSessionsNow(): Promise<void> {
   const data: SessionPersistData[] = [];
   for (const [, s] of sessions) {
+    if (isPlaceholderChannelId(s.channelId)) continue;
     data.push({
       id: s.id,
       channelId: s.channelId,
@@ -88,6 +111,9 @@ async function saveSessions(): Promise<void> {
       tmuxName: s.tmuxName,
       providerSessionId: s.providerSessionId,
       model: s.model,
+      sandboxMode: s.sandboxMode,
+      approvalPolicy: s.approvalPolicy,
+      networkAccessEnabled: s.networkAccessEnabled,
       agentPersona: s.agentPersona,
       verbose: s.verbose || undefined,
       mode: s.mode !== 'auto' ? s.mode : undefined,
@@ -100,6 +126,25 @@ async function saveSessions(): Promise<void> {
   await sessionStore.write(data);
 }
 
+function saveSessions(): Promise<void> {
+  saveQueue = saveQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        await persistSessionsNow();
+      } catch (err: unknown) {
+        console.error(`Failed to persist sessions: ${(err as Error).message}`);
+      }
+    });
+  return saveQueue;
+}
+
+export interface CreateSessionOptions {
+  sandboxMode?: CodexSandboxMode;
+  approvalPolicy?: CodexApprovalPolicy;
+  networkAccessEnabled?: boolean;
+}
+
 // Session CRUD
 
 export async function createSession(
@@ -109,8 +154,16 @@ export async function createSession(
   projectName: string,
   provider: ProviderName = 'claude',
   providerSessionId?: string,
+  options: CreateSessionOptions = {},
 ): Promise<Session> {
   const resolvedDir = resolvePath(directory);
+  const effectiveOptions: CreateSessionOptions = provider === 'codex'
+    ? {
+        sandboxMode: options.sandboxMode ?? config.codexSandboxMode,
+        approvalPolicy: options.approvalPolicy ?? config.codexApprovalPolicy,
+        networkAccessEnabled: options.networkAccessEnabled ?? config.codexNetworkAccessEnabled,
+      }
+    : options;
 
   if (!isPathAllowed(resolvedDir, config.allowedPaths)) {
     throw new Error(`Directory not in allowed paths: ${resolvedDir}`);
@@ -145,6 +198,9 @@ export async function createSession(
     provider,
     tmuxName,
     providerSessionId,
+    sandboxMode: effectiveOptions.sandboxMode,
+    approvalPolicy: effectiveOptions.approvalPolicy,
+    networkAccessEnabled: effectiveOptions.networkAccessEnabled,
     verbose: false,
     mode: 'auto',
     isGenerating: false,
@@ -155,8 +211,10 @@ export async function createSession(
   };
 
   sessions.set(id, session);
-  channelToSession.set(channelId, id);
-  await saveSessions();
+  if (!isPlaceholderChannelId(channelId)) {
+    channelToSession.set(channelId, id);
+    await saveSessions();
+  }
 
   return session;
 }
@@ -192,31 +250,43 @@ export async function endSession(id: string): Promise<void> {
     }
   }
 
-  channelToSession.delete(session.channelId);
+  if (!isPlaceholderChannelId(session.channelId)) {
+    channelToSession.delete(session.channelId);
+  }
   sessions.delete(id);
   await saveSessions();
 }
 
-export function linkChannel(sessionId: string, channelId: string): void {
+export async function linkChannel(sessionId: string, channelId: string): Promise<void> {
   const session = sessions.get(sessionId);
-  if (session) {
-    channelToSession.delete(session.channelId);
-    session.channelId = channelId;
-    channelToSession.set(channelId, sessionId);
-    saveSessions();
+  if (!session) {
+    throw new Error(`Session "${sessionId}" not found`);
   }
+
+  if (!isPlaceholderChannelId(session.channelId)) {
+    channelToSession.delete(session.channelId);
+  }
+  session.channelId = channelId;
+  channelToSession.set(channelId, sessionId);
+  await saveSessions();
 }
 
-export function unlinkChannel(channelId: string): void {
-  const sessionId = channelToSession.get(channelId);
-  if (sessionId) {
-    channelToSession.delete(channelId);
-    const session = sessions.get(sessionId);
-    if (session) {
-      sessions.delete(sessionId);
+export async function unlinkChannel(channelId: string): Promise<void> {
+  let sessionId = channelToSession.get(channelId);
+  if (!sessionId) {
+    for (const [id, session] of sessions) {
+      if (session.channelId === channelId) {
+        sessionId = id;
+        break;
+      }
     }
-    saveSessions();
   }
+
+  if (!sessionId) return;
+
+  channelToSession.delete(channelId);
+  sessions.delete(sessionId);
+  await saveSessions();
 }
 
 // Model management
@@ -305,6 +375,9 @@ export async function* sendPrompt(
       directory: session.directory,
       providerSessionId: session.providerSessionId,
       model: session.model,
+      sandboxMode: session.sandboxMode,
+      approvalPolicy: session.approvalPolicy,
+      networkAccessEnabled: session.networkAccessEnabled,
       systemPromptParts,
       abortController: controller,
     });
@@ -357,6 +430,9 @@ export async function* continueSession(
       directory: session.directory,
       providerSessionId: session.providerSessionId,
       model: session.model,
+      sandboxMode: session.sandboxMode,
+      approvalPolicy: session.approvalPolicy,
+      networkAccessEnabled: session.networkAccessEnabled,
       systemPromptParts,
       abortController: controller,
     });

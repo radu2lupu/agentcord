@@ -140,7 +140,7 @@ export async function startBot(): Promise<void> {
   // Channel deletion cleanup
   client.on('channelDelete', channel => {
     if (channel.type === ChannelType.GuildText) {
-      unlinkChannel(channel.id);
+      void unlinkChannel(channel.id);
     }
   });
 

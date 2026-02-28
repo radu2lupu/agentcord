@@ -1,7 +1,16 @@
-import type { ProviderName } from './providers/types.ts';
+import type { ProviderName, CodexSandboxMode, CodexApprovalPolicy } from './providers/types.ts';
 
 // Re-export content block types from providers (used by message-handler, etc.)
-export type { ContentBlock, ImageMediaType, TextBlock, ImageBlock, LocalImageBlock, ProviderName } from './providers/types.ts';
+export type {
+  ContentBlock,
+  ImageMediaType,
+  TextBlock,
+  ImageBlock,
+  LocalImageBlock,
+  ProviderName,
+  CodexSandboxMode,
+  CodexApprovalPolicy,
+} from './providers/types.ts';
 
 export interface McpServer {
   name: string;
@@ -29,6 +38,9 @@ export interface Session {
   tmuxName: string;
   providerSessionId?: string;
   model?: string;
+  sandboxMode?: CodexSandboxMode;
+  approvalPolicy?: CodexApprovalPolicy;
+  networkAccessEnabled?: boolean;
   agentPersona?: string;
   verbose: boolean;
   mode: SessionMode;
@@ -48,6 +60,9 @@ export interface SessionPersistData {
   tmuxName: string;
   providerSessionId?: string;
   model?: string;
+  sandboxMode?: CodexSandboxMode;
+  approvalPolicy?: CodexApprovalPolicy;
+  networkAccessEnabled?: boolean;
   agentPersona?: string;
   verbose?: boolean;
   mode?: SessionMode;
@@ -83,6 +98,9 @@ export interface Config {
   defaultDirectory: string;
   messageRetentionDays: number | null;
   rateLimitMs: number;
+  codexSandboxMode?: CodexSandboxMode;
+  codexApprovalPolicy?: CodexApprovalPolicy;
+  codexNetworkAccessEnabled?: boolean;
 }
 
 export interface ExpandableContent {

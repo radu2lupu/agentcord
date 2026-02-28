@@ -25,7 +25,7 @@ import {
   formatLastActivity,
   truncate,
 } from './utils.ts';
-import type { ProviderName } from './types.ts';
+import type { ProviderName, CodexSandboxMode, CodexApprovalPolicy } from './types.ts';
 
 // Logging callback (set by bot.ts)
 let logFn: (msg: string) => void = console.log;
@@ -130,9 +130,44 @@ const PROVIDER_COLORS: Record<ProviderName, number> = {
   codex: 0x10a37f,
 };
 
+function resolveCodexSessionOptions(
+  interaction: ChatInputCommandInteraction,
+  provider: ProviderName,
+): sessions.CreateSessionOptions {
+  if (provider !== 'codex') return {};
+
+  const sandboxMode =
+    (interaction.options.getString('sandbox-mode') as CodexSandboxMode | null)
+    ?? config.codexSandboxMode;
+  const approvalPolicy =
+    (interaction.options.getString('approval-policy') as CodexApprovalPolicy | null)
+    ?? config.codexApprovalPolicy;
+  const networkAccessEnabled =
+    interaction.options.getBoolean('network-access')
+    ?? config.codexNetworkAccessEnabled;
+
+  return { sandboxMode, approvalPolicy, networkAccessEnabled };
+}
+
+function addCodexPolicyFields(
+  fields: Array<{ name: string; value: string; inline: boolean }>,
+  options: sessions.CreateSessionOptions,
+): void {
+  if (options.sandboxMode) {
+    fields.push({ name: 'Sandbox', value: options.sandboxMode, inline: true });
+  }
+  if (options.approvalPolicy) {
+    fields.push({ name: 'Approval', value: options.approvalPolicy, inline: true });
+  }
+  if (options.networkAccessEnabled !== undefined) {
+    fields.push({ name: 'Network Access', value: options.networkAccessEnabled ? 'enabled' : 'disabled', inline: true });
+  }
+}
+
 async function handleSessionNew(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true);
   const provider = (interaction.options.getString('provider') || 'claude') as ProviderName;
+  const codexOptions = resolveCodexSessionOptions(interaction, provider);
   let directory = interaction.options.getString('directory');
 
   // If no directory specified, check if we're inside a project category
@@ -148,6 +183,7 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
   await interaction.deferReply();
 
   let channel: TextChannel | undefined;
+  let session: Awaited<ReturnType<typeof sessions.createSession>> | undefined;
 
   try {
     const guild = interaction.guild!;
@@ -157,7 +193,7 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
 
     // Create session first (handles name deduplication)
     // Use a temp channel ID, we'll update it after creating the channel
-    const session = await sessions.createSession(name, directory, 'pending', projectName, provider);
+    session = await sessions.createSession(name, directory, 'pending', projectName, provider, undefined, codexOptions);
 
     // Create Discord channel with the deduplicated session ID
     channel = await guild.channels.create({
@@ -168,7 +204,7 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
     }) as TextChannel;
 
     // Link the real channel ID
-    sessions.linkChannel(session.id, channel.id);
+    await sessions.linkChannel(session.id, channel.id);
 
     const fields = [
       { name: 'Channel', value: `#${provider}-${session.id}`, inline: true },
@@ -179,6 +215,7 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
     if (session.tmuxName) {
       fields.push({ name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
     }
+    addCodexPolicyFields(fields, codexOptions);
 
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
@@ -199,6 +236,7 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
     if (session.tmuxName) {
       welcomeFields.push({ name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
     }
+    addCodexPolicyFields(welcomeFields, codexOptions);
     welcomeEmbed.addFields(welcomeFields);
 
     await channel.send({ embeds: [welcomeEmbed] });
@@ -206,6 +244,9 @@ async function handleSessionNew(interaction: ChatInputCommandInteraction): Promi
     // Clean up on failure
     if (channel) {
       try { await channel.delete(); } catch { /* best effort */ }
+    }
+    if (session) {
+      try { await sessions.endSession(session.id); } catch { /* best effort */ }
     }
     await interaction.editReply(`Failed to create session: ${(err as Error).message}`);
   }
@@ -350,6 +391,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
   const providerSessionId = interaction.options.getString('session-id', true);
   const name = interaction.options.getString('name', true);
   const provider = (interaction.options.getString('provider') || 'claude') as ProviderName;
+  const codexOptions = resolveCodexSessionOptions(interaction, provider);
   const directory = interaction.options.getString('directory') || config.defaultDirectory;
 
   // Only validate UUID format for Claude sessions
@@ -367,6 +409,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
   await interaction.deferReply();
 
   let channel: TextChannel | undefined;
+  let session: Awaited<ReturnType<typeof sessions.createSession>> | undefined;
 
   try {
     const guild = interaction.guild!;
@@ -374,7 +417,15 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
 
     const { category } = await ensureProjectCategory(guild, projectName, directory);
 
-    const session = await sessions.createSession(name, directory, 'pending', projectName, provider, providerSessionId);
+    session = await sessions.createSession(
+      name,
+      directory,
+      'pending',
+      projectName,
+      provider,
+      providerSessionId,
+      codexOptions,
+    );
 
     channel = await guild.channels.create({
       name: `${provider}-${session.id}`,
@@ -383,7 +434,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
       topic: `${PROVIDER_LABELS[provider]} session (resumed) | Dir: ${directory}`,
     }) as TextChannel;
 
-    sessions.linkChannel(session.id, channel.id);
+    await sessions.linkChannel(session.id, channel.id);
 
     const fields = [
       { name: 'Channel', value: `#${provider}-${session.id}`, inline: true },
@@ -395,6 +446,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
     if (session.tmuxName) {
       fields.push({ name: 'Terminal', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
     }
+    addCodexPolicyFields(fields, codexOptions);
 
     const embed = new EmbedBuilder()
       .setColor(0xe67e22)
@@ -411,6 +463,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
     if (session.tmuxName) {
       welcomeFields.push({ name: 'Terminal Access', value: `\`tmux attach -t ${session.tmuxName}\``, inline: false });
     }
+    addCodexPolicyFields(welcomeFields, codexOptions);
 
     await channel.send({
       embeds: [
@@ -427,6 +480,9 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
   } catch (err: unknown) {
     if (channel) {
       try { await channel.delete(); } catch { /* best effort */ }
+    }
+    if (session) {
+      try { await sessions.endSession(session.id); } catch { /* best effort */ }
     }
     await interaction.editReply(`Failed to resume session: ${(err as Error).message}`);
   }
@@ -457,7 +513,15 @@ async function handleSessionList(interaction: ChatInputCommandInteraction): Prom
       const status = s.isGenerating ? '🟢 generating' : '⚪ idle';
       const modeEmoji = { auto: '\u26A1', plan: '\uD83D\uDCCB', normal: '\uD83D\uDEE1\uFE0F' }[s.mode] || '\u26A1';
       const providerTag = `[${s.provider}]`;
-      return `**${s.id}** ${providerTag} — ${status} ${modeEmoji} ${s.mode} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}`;
+      const codexPolicy = s.provider === 'codex'
+        ? [
+            s.sandboxMode ? `sandbox:${s.sandboxMode}` : '',
+            s.approvalPolicy ? `approval:${s.approvalPolicy}` : '',
+            s.networkAccessEnabled !== undefined ? `network:${s.networkAccessEnabled ? 'on' : 'off'}` : '',
+          ].filter(Boolean).join(' ')
+        : '';
+      const policySuffix = codexPolicy ? ` | ${codexPolicy}` : '';
+      return `**${s.id}** ${providerTag} — ${status} ${modeEmoji} ${s.mode} | ${formatUptime(s.createdAt)} uptime | ${s.messageCount} msgs | $${s.totalCost.toFixed(4)} | ${formatLastActivity(s.lastActivity)}${policySuffix}`;
     });
     embed.addFields({ name: `📁 ${project}`, value: lines.join('\n') });
   }

@@ -1,4 +1,6 @@
 export type ProviderName = 'claude' | 'codex';
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+export type CodexApprovalPolicy = 'never' | 'on-request' | 'on-failure' | 'untrusted';
 
 // ── Content blocks (provider-agnostic) ──────────────────────────
 
@@ -35,6 +37,9 @@ export interface ProviderSessionOptions {
   directory: string;
   providerSessionId?: string;
   model?: string;
+  sandboxMode?: CodexSandboxMode;
+  approvalPolicy?: CodexApprovalPolicy;
+  networkAccessEnabled?: boolean;
   systemPromptParts: string[];
   abortController: AbortController;
 }

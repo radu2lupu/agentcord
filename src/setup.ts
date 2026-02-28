@@ -43,6 +43,7 @@ function writeEnvFile(env: Record<string, string>): void {
     { comment: '# Discord App', keys: ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_GUILD_ID'] },
     { comment: '# Security', keys: ['ALLOWED_USERS', 'ALLOW_ALL_USERS'] },
     { comment: '# Paths', keys: ['ALLOWED_PATHS', 'DEFAULT_DIRECTORY'] },
+    { comment: '# Codex Defaults', keys: ['CODEX_SANDBOX_MODE', 'CODEX_APPROVAL_POLICY', 'CODEX_NETWORK_ACCESS_ENABLED'] },
     { comment: '# Optional', keys: ['MESSAGE_RETENTION_DAYS', 'RATE_LIMIT_MS'] },
   ];
 
@@ -279,6 +280,9 @@ export async function runSetup(): Promise<void> {
   // Preserve optional settings from existing config
   if (existing.MESSAGE_RETENTION_DAYS) env.MESSAGE_RETENTION_DAYS = existing.MESSAGE_RETENTION_DAYS;
   if (existing.RATE_LIMIT_MS) env.RATE_LIMIT_MS = existing.RATE_LIMIT_MS;
+  if (existing.CODEX_SANDBOX_MODE) env.CODEX_SANDBOX_MODE = existing.CODEX_SANDBOX_MODE;
+  if (existing.CODEX_APPROVAL_POLICY) env.CODEX_APPROVAL_POLICY = existing.CODEX_APPROVAL_POLICY;
+  if (existing.CODEX_NETWORK_ACCESS_ENABLED) env.CODEX_NETWORK_ACCESS_ENABLED = existing.CODEX_NETWORK_ACCESS_ENABLED;
 
   const s = p.spinner();
   s.start('Writing .env file');
@@ -423,4 +427,3 @@ export async function runSetup(): Promise<void> {
 
   p.outro(green('Setup complete!'));
 }
-
