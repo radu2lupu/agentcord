@@ -164,6 +164,18 @@ function addCodexPolicyFields(
   }
 }
 
+function parseTopicDirectory(topic: string | null): string | null {
+  if (!topic) return null;
+  const m = topic.match(/\bDir:\s*(.+?)(?:\s*\|\s*Provider Session:|$)/i);
+  return m?.[1]?.trim() || null;
+}
+
+function parseTopicProviderSessionId(topic: string | null): string | undefined {
+  if (!topic) return undefined;
+  const m = topic.match(/\bProvider Session:\s*([^\s|]+)/i);
+  return m?.[1]?.trim() || undefined;
+}
+
 async function handleSessionNew(interaction: ChatInputCommandInteraction): Promise<void> {
   const name = interaction.options.getString('name', true);
   const provider = (interaction.options.getString('provider') || 'claude') as ProviderName;
@@ -431,7 +443,7 @@ async function handleSessionResume(interaction: ChatInputCommandInteraction): Pr
       name: `${provider}-${session.id}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      topic: `${PROVIDER_LABELS[provider]} session (resumed) | Dir: ${directory}`,
+      topic: `${PROVIDER_LABELS[provider]} session (resumed) | Dir: ${directory} | Provider Session: ${providerSessionId}`,
     }) as TextChannel;
 
     await sessions.linkChannel(session.id, channel.id);
@@ -644,8 +656,49 @@ async function handleSessionSync(interaction: ChatInputCommandInteraction): Prom
   const tmuxSessions = await sessions.listTmuxSessions();
   const currentSessions = sessions.getAllSessions();
   const currentIds = new Set(currentSessions.map(s => s.id));
+  const currentChannelIds = new Set(currentSessions.map(s => s.channelId));
 
-  let synced = 0;
+  let syncedTmux = 0;
+  let syncedChannels = 0;
+
+  // First, recover provider channels that already exist in Discord but are not mapped in memory.
+  // This is the main recovery path for Codex sessions (no tmux transport).
+  for (const ch of guild.channels.cache.values()) {
+    if (ch.type !== ChannelType.GuildText) continue;
+    if (currentChannelIds.has(ch.id)) continue;
+
+    const m = ch.name.match(/^(claude|codex)-(.+)$/);
+    if (!m) continue;
+
+    const provider = m[1] as ProviderName;
+    const sessionName = m[2];
+    const directory = parseTopicDirectory(ch.topic) || config.defaultDirectory;
+    const providerSessionId = parseTopicProviderSessionId(ch.topic);
+    const projectName = projectNameFromDir(directory);
+
+    if (ch.parentId) {
+      projectMgr.getOrCreateProject(projectName, directory, ch.parentId);
+    }
+
+    try {
+      const recovered = await sessions.createSession(
+        sessionName,
+        directory,
+        ch.id,
+        projectName,
+        provider,
+        providerSessionId,
+        { recoverExisting: true },
+      );
+      syncedChannels++;
+      currentIds.add(recovered.id);
+      currentChannelIds.add(ch.id);
+    } catch {
+      // best effort
+    }
+  }
+
+  // Then, recover orphan tmux sessions that don't have a Discord channel yet.
   for (const tmuxSession of tmuxSessions) {
     if (currentIds.has(tmuxSession.id)) continue;
 
@@ -659,13 +712,28 @@ async function handleSessionSync(interaction: ChatInputCommandInteraction): Prom
       topic: `Claude Code session (synced) | Dir: ${tmuxSession.directory}`,
     });
 
-    await sessions.createSession(tmuxSession.id, tmuxSession.directory, channel.id, projectName, 'claude');
-    synced++;
+    const recovered = await sessions.createSession(
+      tmuxSession.id,
+      tmuxSession.directory,
+      channel.id,
+      projectName,
+      'claude',
+      undefined,
+      { recoverExisting: true },
+    );
+    syncedTmux++;
+    currentIds.add(recovered.id);
+    currentChannelIds.add(channel.id);
   }
+
+  const synced = syncedChannels + syncedTmux;
+  const detail = [];
+  if (syncedChannels > 0) detail.push(`${syncedChannels} channel`);
+  if (syncedTmux > 0) detail.push(`${syncedTmux} tmux`);
 
   await interaction.editReply(
     synced > 0
-      ? `Synced ${synced} orphaned session(s).`
+      ? `Synced ${synced} orphaned session(s) (${detail.join(', ')}).`
       : 'No orphaned sessions found.',
   );
 }

@@ -185,4 +185,50 @@ describe('session-manager', () => {
       networkAccessEnabled: false,
     });
   });
+
+  it('does not throw when continueSession is aborted and always clears generating state', async () => {
+    const provider = makeProviderStub();
+    provider.continueSession.mockImplementation(async function* () {
+      throw new Error('operation cancelled by user');
+    });
+    ensureProviderMock.mockResolvedValue(provider);
+
+    const sessions = await import('../src/session-manager.ts');
+    const session = await sessions.createSession('continue-abort', tmpCwd, 'pending', 'project-x', 'codex');
+
+    const events: any[] = [];
+    for await (const event of sessions.continueSession(session.id)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([]);
+    expect(sessions.getSession(session.id)?.isGenerating).toBe(false);
+  });
+
+  it('force-clears stuck generating state when aborting', async () => {
+    const provider = makeProviderStub();
+    ensureProviderMock.mockResolvedValue(provider);
+
+    const sessions = await import('../src/session-manager.ts');
+    const session = await sessions.createSession('stuck-state', tmpCwd, 'pending', 'project-x', 'codex');
+    const live = sessions.getSession(session.id)!;
+
+    live.isGenerating = true;
+    const stopped = sessions.abortSession(session.id);
+
+    expect(stopped).toBe(true);
+    expect(live.isGenerating).toBe(false);
+  });
+
+  it('does not auto-dedupe recovered sessions', async () => {
+    const provider = makeProviderStub();
+    ensureProviderMock.mockResolvedValue(provider);
+    const sessions = await import('../src/session-manager.ts');
+
+    await sessions.createSession('fix-auth', tmpCwd, 'pending', 'project-x', 'codex');
+
+    await expect(
+      sessions.createSession('fix-auth', tmpCwd, 'pending', 'project-x', 'codex', undefined, { recoverExisting: true }),
+    ).rejects.toThrow('Session "fix-auth" already exists');
+  });
 });

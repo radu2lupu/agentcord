@@ -88,7 +88,7 @@ export function getCommandDefinitions(): RESTPostAPIChatInputApplicationCommands
     .addSubcommand(sub =>
       sub.setName('attach').setDescription('Show tmux attach command for terminal access'))
     .addSubcommand(sub =>
-      sub.setName('sync').setDescription('Reconnect orphaned tmux sessions'))
+      sub.setName('sync').setDescription('Reconnect orphaned sessions (tmux + provider channels)'))
     .addSubcommand(sub =>
       sub.setName('model')
         .setDescription('Change the model for this session')

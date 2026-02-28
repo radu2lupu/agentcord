@@ -1,6 +1,6 @@
 # agentcord
 
-Run and manage AI coding agent sessions on your machine through Discord. Currently supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), with more agents coming soon.
+Run and manage AI coding agent sessions on your machine through Discord. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and OpenAI Codex.
 
 Each session gets a Discord channel for chatting with the agent and a tmux session for direct terminal access. Sessions are organized by project — create multiple sessions in the same codebase, each with their own channel.
 
@@ -20,6 +20,7 @@ The setup wizard walks you through creating a Discord app, configuring the bot t
 - **Node.js 22.6+** (uses native TypeScript execution)
 - **tmux** (for terminal session access)
 - **Claude Code** installed on the machine (`@anthropic-ai/claude-agent-sdk`)
+- **OpenAI Codex SDK** for Codex sessions (`@openai/codex-sdk`)
 
 ## How It Works
 
@@ -58,7 +59,7 @@ Discord Server
 | `/claude attach` | Show tmux attach command for terminal access |
 | `/claude model <model>` | Change model for the session |
 | `/claude verbose` | Toggle tool call/result visibility |
-| `/claude sync` | Reconnect orphaned tmux sessions |
+| `/claude sync` | Reconnect orphaned sessions (tmux + existing provider channels, including Codex) |
 
 ### Shell
 

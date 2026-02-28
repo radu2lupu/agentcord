@@ -143,6 +143,7 @@ export interface CreateSessionOptions {
   sandboxMode?: CodexSandboxMode;
   approvalPolicy?: CodexApprovalPolicy;
   networkAccessEnabled?: boolean;
+  recoverExisting?: boolean;
 }
 
 // Session CRUD
@@ -179,15 +180,28 @@ export async function createSession(
   // Auto-deduplicate: append -2, -3, etc. if name is taken
   let id = sanitizeSessionName(name);
   let tmuxName = usesTmux ? `${SESSION_PREFIX}${id}` : '';
-  let suffix = 1;
-  while (sessions.has(id) || (usesTmux && await tmuxSessionExists(tmuxName))) {
-    suffix++;
-    id = sanitizeSessionName(`${name}-${suffix}`);
-    if (usesTmux) tmuxName = `${SESSION_PREFIX}${id}`;
+  if (options.recoverExisting) {
+    if (sessions.has(id)) {
+      throw new Error(`Session "${id}" already exists`);
+    }
+  } else {
+    let suffix = 1;
+    while (sessions.has(id) || (usesTmux && await tmuxSessionExists(tmuxName))) {
+      suffix++;
+      id = sanitizeSessionName(`${name}-${suffix}`);
+      if (usesTmux) tmuxName = `${SESSION_PREFIX}${id}`;
+    }
   }
 
   if (usesTmux) {
-    await tmux('new-session', '-d', '-s', tmuxName, '-c', resolvedDir);
+    if (options.recoverExisting) {
+      const existing = await tmuxSessionExists(tmuxName);
+      if (!existing) {
+        await tmux('new-session', '-d', '-s', tmuxName, '-c', resolvedDir);
+      }
+    } else {
+      await tmux('new-session', '-d', '-s', tmuxName, '-c', resolvedDir);
+    }
   }
 
   const session: Session = {

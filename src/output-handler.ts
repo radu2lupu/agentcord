@@ -18,6 +18,7 @@ import {
   renderReasoningEmbed,
   renderCodexTodoListEmbed,
 } from './codex-renderer.ts';
+import { getSession } from './session-manager.ts';
 
 // In-memory store for expandable content (with TTL cleanup)
 const expandableStore = new Map<string, ExpandableContent>();
@@ -672,7 +673,19 @@ export async function handleOutputStream(
         }
 
         case 'session_init': {
-          // Handled by session-manager, no Discord output needed
+          // Keep provider session ID on channel topic so /session sync can recover Codex threads.
+          const session = getSession(sessionId);
+          const providerSessionId = event.providerSessionId || session?.providerSessionId;
+          if (providerSessionId) {
+            const currentTopic = channel.topic ?? '';
+            const topicBase = currentTopic
+              ? currentTopic.replace(/\s*\|\s*Provider Session:\s*[^\s|]+/i, '')
+              : `${session?.provider === 'codex' ? 'OpenAI Codex' : 'Claude Code'} session | Dir: ${session?.directory || 'unknown'}`;
+            const nextTopic = truncate(`${topicBase} | Provider Session: ${providerSessionId}`, 1024);
+            if (nextTopic !== currentTopic) {
+              await channel.setTopic(nextTopic).catch(() => {});
+            }
+          }
           break;
         }
       }
