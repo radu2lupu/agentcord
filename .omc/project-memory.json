@@ -1,0 +1,127 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1777105909386,
+  "projectRoot": "/Users/radulupu/Code/agentcord",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=22.6.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "vitest",
+        "version": "3.0.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": "Node.js 22.6.0"
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsup",
+      "prepublishOnly": "npm run build",
+      "setup": "node --experimental-strip-types src/setup.ts",
+      "start": "node --experimental-strip-types src/index.ts",
+      "dev": "tsup --watch --onSuccess 'node dist/cli.js'",
+      "typecheck": "tsc --noEmit",
+      "test": "vitest run",
+      "test:watch": "vitest"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": "*.test.ts",
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "bin",
+      "src",
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "bin": {
+      "path": "bin",
+      "purpose": "Executable scripts",
+      "fileCount": 1,
+      "lastAccessed": 1777105909350,
+      "keyFiles": [
+        "agentcord.js"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 5,
+      "lastAccessed": 1777105909351,
+      "keyFiles": [
+        "bot-QXUF3LNK.js",
+        "cli.js",
+        "codex-provider-BB2OO3OK.js",
+        "daemon-MOEDV2OK.js",
+        "setup-VHXX7YM6.js"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 20,
+      "lastAccessed": 1777105909354,
+      "keyFiles": [
+        "agents.ts",
+        "bot.ts",
+        "button-handler.ts",
+        "cli.ts",
+        "codex-renderer.ts"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1777105909355,
+      "keyFiles": [
+        "codex-provider.test.ts",
+        "command-handlers-sync.test.ts",
+        "session-manager.test.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "MAESTRI_DESIGN.md",
+      "accessCount": 1,
+      "lastAccessed": 1776024820235,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
